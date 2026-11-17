@@ -1,61 +1,34 @@
-// Every tuning number and colour in one place. The playfield is a fixed 1280x720 logical area;
-// the renderer scales it to the window, so no rule below depends on the screen size.
-
-export const FIELD = { width: 1280, height: 720, groundY: 664 };
-
-/** The simulation's fixed step, in seconds: 60 updates a second whatever the display's rate. */
-export const STEP = 1 / 60;
-
-export const PLAYER = {
-  width: 72,
-  height: 24,
-  speed: 560,
-  invulnerable: 1.5,
-};
-
-export const LIVES = 3;
-
-export const BLOCK = {
-  minWidth: 40,
-  maxWidth: 110,
-  height: 36,
-  speed: 240,
-  speedPerLevel: 30,
-  speedJitter: 90,
-  interval: 0.55,
-  intervalScale: 0.88,
-  minInterval: 0.14,
-  dodgePoints: 1,
-};
-
-export const COIN = {
-  size: 24,
-  speed: 190,
-  speedPerLevel: 14,
-  interval: 1.4,
-  intervalJitter: 0.8,
-  points: 10,
-};
-
-/** Seconds of play per level, and the last level: speeds and spawn rates stop growing there. */
-export const LEVEL = { seconds: 12, max: 12 };
-
-/** How many falling things can exist at once; the pool is allocated once, at boot. */
-export const POOL_SIZE = 64;
-
+// Porto Verde tuning: every number and colour in one place.
+// Original city, characters and story — nothing borrowed from any commercial game.
+export const WORLD = { width: 3200, height: 2400, roadGap: 400, roadWidth: 96 };
+export const PLAYER = { walkSpeed: 230, runSpeed: 330, radius: 14, maxHealth: 100 };
+export const CAR = { accel: 520, maxSpeed: 430, reverse: 160, turn: 2.6, brake: 700 };
+export const WANTED = { decayDelay: 9, decayRate: 0.35, max: 5 };
+export const SAVE_KEY = 'porto-verde.save.v1';
+export const BEST_KEY = 'porto-verde.best.v1';
 export const PALETTE = {
-  backdrop: '#11141b',
-  sky: '#1b1f2a',
-  ground: '#2a3040',
-  player: '#4fc3f7',
-  block: '#e5534b',
-  coin: '#f2c94c',
-  panel: '#252b38',
-  text: '#eef1f5',
-  muted: '#8b93a3',
+  grass: '#5da24a', grass2: '#548f43', road: '#3a3f46', roadLine: '#e8c93f',
+  sidewalk: '#b9b3a4', building: '#c98a5e', building2: '#7fa3c9', building3: '#e0c06a',
+  building4: '#9b7ec2', sand: '#ecd9a0', sea: '#2f7fb8', sea2: '#2a6ea3',
+  pier: '#8a6a4a', park: '#4c8a3f', player: '#ffcf3f', police: '#2f6fd0',
+  text: '#f4f1e6', muted: '#c9c4b2', panel: 'rgba(12,16,24,0.82)',
+  hudGreen: '#7ee787', hudRed: '#ff6b5e', gold: '#ffd23f',
 };
-
 export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
-
-/** Where the best score is kept between visits (this browser only). */
-export const BEST_KEY = 'block-dodger.best';
+export function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+export function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+export function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
+export function angleTo(ax, ay, bx, by) { return Math.atan2(by - ay, bx - ax); }
+export function fmtMoney(n) { return '$' + Math.round(n).toLocaleString('en-US'); }
+export function fmtClock(minutes) {
+  const h = Math.floor(minutes / 60) % 24, m = Math.floor(minutes % 60);
+  return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+}
