@@ -14,6 +14,16 @@ export function spawnPedestrians(city, count, rnd) {
       state: 'walk', panic: 0, tx: x, ty: y, retarget: rnd() * 4, alive: true, hp: 30,
     });
   }
+  // Marina foot traffic: dockworkers and strollers along the south-east docks,
+  // so the new district feels lived-in instead of empty.
+  for (let i = 0; i < 6; i++) {
+    const x = 2420 + rnd() * 680, y = 1620 + rnd() * 480;
+    peds.push({
+      x, y, angle: rnd() * Math.PI * 2, speed: 24 + rnd() * 26,
+      skin: SKINS[(count + i) % SKINS.length], name: NAMES[(count + i) % NAMES.length],
+      state: 'walk', panic: 0, tx: x, ty: y, retarget: rnd() * 4, alive: true, hp: 30,
+    });
+  }
   return peds;
 }
 export function stepPedestrians(peds, dt, city, player, danger) {

@@ -4,6 +4,11 @@ export const WORLD = { width: 3200, height: 2400, roadGap: 400, roadWidth: 96 };
 export const PLAYER = { walkSpeed: 230, runSpeed: 330, radius: 14, maxHealth: 100 };
 export const CAR = { accel: 520, maxSpeed: 430, reverse: 160, turn: 2.6, brake: 700 };
 export const WANTED = { decayDelay: 9, decayRate: 0.35, max: 5 };
+export const GARAGE = { x: 700, y: 500, r: 110, nitroCharges: 3 };
+// Marina district bounds (south-east corner) — see world.js generateCity.
+export const MARINA = { x: 2350, y: 1550, w: 800, h: 800, label: 'MARINA' };
+// Police escalation: roadblocks from wanted 3, ramming from wanted 4, 4 cops at 5.
+export const POLICE = { roadblockAt: 3, ramAt: 4, maxCops: 4, maxCopsLow: 3 };
 export const SAVE_KEY = 'porto-verde.save.v1';
 export const BEST_KEY = 'porto-verde.best.v1';
 export const PALETTE = {
@@ -11,6 +16,8 @@ export const PALETTE = {
   sidewalk: '#b9b3a4', building: '#c98a5e', building2: '#7fa3c9', building3: '#e0c06a',
   building4: '#9b7ec2', sand: '#ecd9a0', sea: '#2f7fb8', sea2: '#2a6ea3',
   pier: '#8a6a4a', park: '#4c8a3f', player: '#ffcf3f', police: '#2f6fd0',
+  warehouse: '#8a7a5e', marinaWater: '#2e8f8a', boatHull: '#e8e4d8', boatCabin: '#c94f43',
+  crate: '#a9713a', crateEdge: '#6d4a22', barricade: '#ff7a1a',
   text: '#f4f1e6', muted: '#c9c4b2', panel: 'rgba(12,16,24,0.82)',
   hudGreen: '#7ee787', hudRed: '#ff6b5e', gold: '#ffd23f',
 };

@@ -1,16 +1,17 @@
 // Porto Verde — boot, loop, screens, wanted/police, missions, save/load, shot staging.
 // ?seed=N fixes the city. ?shot=chase|menu|street|mission stages that scene and sets
 // window.__shotReady. window.__game exposes live state for playtesting.
-import { WORLD, SAVE_KEY, BEST_KEY, mulberry32, clamp, dist } from './config.js';
+import { WORLD, SAVE_KEY, BEST_KEY, POLICE, mulberry32, clamp, dist } from './config.js';
 import { generateCity } from './world.js';
 import { createPlayer, stepPlayer, tryEnterCar, exitCar, addWanted, damagePlayer } from './player.js';
 import { spawnTraffic, stepTraffic, stepPolice, stepDriving, makeCar, carHitsPed } from './vehicles.js';
 import { spawnPedestrians, stepPedestrians, nearestPed } from './pedestrians.js';
-import { createMissionState, currentMission, currentStep, startMission, missionObjectiveText, stepObjective, startSideJob, stepSideJob } from './missions.js';
+import { MISSIONS, createMissionState, currentMission, currentStep, startMission, missionObjectiveText, stepObjective, startSideJob, stepSideJob } from './missions.js';
 import { createCombat, spawnEnemies, shoot, punch, stepCombat } from './combat.js';
 import { createAudio } from './audio.js';
-import { createInput, ACTION_START, ACTION_PAUSE, ACTION_ENTER, ACTION_MUTE } from './input.js';
+import { createInput, ACTION_START, ACTION_PAUSE, ACTION_ENTER, ACTION_MUTE, ACTION_GARAGE, ACTION_PUNCH, ACTION_CONTINUE } from './input.js';
 import { createRenderer, SCREEN_MENU, SCREEN_PLAY, SCREEN_PAUSED, SCREEN_BUSTED, SCREEN_WASTED, SCREEN_WIN } from './render.js';
+import { UPGRADES, isNearGarage, buyUpgrade, refillNitro } from './garage.js';
 
 const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
@@ -33,9 +34,11 @@ function newGameState() {
     combat: createCombat(),
     missionState: createMissionState(),
     pickups: [{ x: 1700, y: 1000, kind: 'health' }, { x: 900, y: 600, kind: 'cash' }, { x: 2400, y: 1500, kind: 'cash' }],
-    police: [], time: 0, clock: 8 * 60 + 15, toast: '', toastT: 0,
+    police: [], roadblocks: [], time: 0, clock: 8 * 60 + 15, toast: '', toastT: 0,
     screen: SCREEN_MENU, best: readBest(), missionTarget: null, objectiveText: '',
-    sideJobTimer: 12, enemiesSpawnedFor: -1, won: false, bustedCount: 0,
+    sideJobTimer: 12, enemiesSpawnedFor: -1, cratesSpawnedFor: -1,
+    garageOpen: false, garageSel: 0, garageMsg: '', garageItems: UPGRADES, nearGarage: false,
+    won: false, bustedCount: 0,
   };
 }
 let s = newGameState();
@@ -46,6 +49,7 @@ function saveGame() {
     window.localStorage.setItem(SAVE_KEY, JSON.stringify({
       money: s.player.money, score: s.player.score, mission: s.missionState.index,
       done: s.missionState.done, x: s.player.x, y: s.player.y, health: s.player.health,
+      upgrades: s.player.upgrades,
     }));
   } catch { /* storage off */ }
 }
@@ -61,6 +65,17 @@ function announce(msg) { status.textContent = msg; }
 function updateObjective() {
   s.objectiveText = missionObjectiveText(s.missionState);
   const st = currentStep(s.missionState);
+  if (s.missionState.active && st && st.type === 'collect') {
+    // Point the marker at the nearest crate still on the ground.
+    let best = null, bd = 1e9;
+    for (const pk of s.pickups) {
+      if (pk.kind !== 'crate') continue;
+      const d = dist(s.player.x, s.player.y, pk.x, pk.y);
+      if (d < bd) { bd = d; best = pk; }
+    }
+    s.missionTarget = best ? { x: best.x, y: best.y } : null;
+    return;
+  }
   s.missionTarget = (s.missionState.active && st && (st.type === 'goto' || st.type === 'escape' || st.type === 'fight'))
     ? { x: st.x, y: st.y } : (s.missionState.sideJob ? { x: s.missionState.sideJob.x, y: s.missionState.sideJob.y } : null);
 }
@@ -70,6 +85,11 @@ function startPlaying(fromSave) {
     if (sv) {
       s.player.money = sv.money; s.player.score = sv.score; s.player.x = sv.x; s.player.y = sv.y;
       s.player.health = sv.health; s.missionState.index = sv.mission; s.missionState.done = sv.done;
+      if (sv.upgrades) {
+        // Keep the fresh shape (new fields stay defaulted) and restore the rest.
+        Object.assign(s.player.upgrades, sv.upgrades);
+        if (!Array.isArray(s.player.upgrades.owned)) s.player.upgrades.owned = [];
+      }
       toast('Save loaded — welcome back, Rico.');
     }
   }
@@ -82,7 +102,7 @@ function endMissionReward(m) {
   toast('MISSION COMPLETE: ' + m.title + ' — +' + '$' + m.reward);
   audio.winJingle(); audio.pickup();
   saveGame();
-  if (s.missionState.index >= 5 && !s.won) {
+  if (s.missionState.index >= MISSIONS.length && !s.won) {
     s.won = true; s.screen = SCREEN_WIN;
     if (s.player.score > s.best) { s.best = s.player.score; saveBest(s.best); }
     announce('Story complete!');
@@ -94,10 +114,30 @@ function maybeSpawnEnemies() {
   const key = ms.index * 10 + ms.step;
   if (s.enemiesSpawnedFor === key) return;
   s.enemiesSpawnedFor = key;
-  const kind = ms.index === 4 ? 'fixer' : 'thug';
+  const kind = ms.index === 6 ? 'fixer' : 'thug';
   spawnEnemies(s.combat, st.x, st.y, st.count || 2, kind);
   ms.killsThisStep = 0;
   toast('Hostiles at the marker — deal with them!');
+}
+function spawnRoadblock() {
+  // Two police cars parked across the road ahead of the player, plus a barricade.
+  const p = s.player;
+  const ang = p.inCar ? p.inCar.angle : p.angle;
+  const cx = clamp(p.x + Math.cos(ang) * 300, 120, WORLD.width - 120);
+  const cy = clamp(p.y + Math.sin(ang) * 300, 120, WORLD.height - 120);
+  const px = Math.cos(ang + Math.PI / 2), py = Math.sin(ang + Math.PI / 2);
+  const c1 = makeCar(cx + px * 55, cy + py * 55, ang + Math.PI / 2, 'police', '#2f6fd0');
+  const c2 = makeCar(cx - px * 55, cy - py * 55, ang + Math.PI / 2, 'police', '#2f6fd0');
+  s.cars.push(c1, c2);
+  s.roadblocks.push({ x: cx, y: cy, cars: [c1, c2] });
+  toast('POLICE ROADBLOCK ahead — find another way around!');
+  audio.crash();
+}
+function clearRoadblocks() {
+  for (const rb of s.roadblocks) {
+    for (const c of rb.cars) { const i = s.cars.indexOf(c); if (i >= 0) s.cars.splice(i, 1); }
+  }
+  s.roadblocks = [];
 }
 function wantedTick(dt) {
   const p = s.player;
@@ -108,15 +148,19 @@ function wantedTick(dt) {
       const nearCop = s.police.some((c) => dist(c.x, c.y, p.x, p.y) < 320);
       if (!nearCop) { p.wanted -= 0.35 * dt; if (p.wanted < 0) p.wanted = 0; }
     }
-    const want = Math.min(3, Math.ceil(p.wanted));
+    // Wanted 5 fields up to 4 pursuit cars; lower levels cap at 3.
+    const want = Math.min(p.wanted >= 5 ? POLICE.maxCops : POLICE.maxCopsLow, Math.ceil(p.wanted));
     while (s.police.length < want) {
       const a = Math.random() * Math.PI * 2;
       const car = makeCar(p.x + Math.cos(a) * 700, p.y + Math.sin(a) * 700, 0, 'police', '#2f6fd0');
       car.cruise = 300; s.police.push(car); s.cars.push(car);
     }
+    if (p.wanted >= POLICE.roadblockAt && s.roadblocks.length === 0) spawnRoadblock();
+    if (p.wanted < POLICE.roadblockAt && s.roadblocks.length > 0) clearRoadblocks();
   } else {
     for (const c of s.police) { const i = s.cars.indexOf(c); if (i >= 0) s.cars.splice(i, 1); }
     s.police = [];
+    if (s.roadblocks.length > 0) clearRoadblocks();
   }
 }
 function policeTick(dt) {
@@ -146,16 +190,46 @@ function wasted() {
   s.screen = SCREEN_WASTED; audio.loseJingle(); audio.siren(false);
   announce('Wasted.');
 }
+function ensureCrates() {
+  const ms = s.missionState, st = currentStep(ms);
+  if (!ms.active || !st || st.type !== 'collect') { s.cratesSpawnedFor = -1; return; }
+  const key = ms.index * 10 + ms.step;
+  if (s.cratesSpawnedFor === key) return;
+  s.cratesSpawnedFor = key;
+  for (const c of st.crates || []) s.pickups.push({ x: c.x, y: c.y, kind: 'crate' });
+}
 function stepGame(dt) {
   s.time += dt; s.clock += dt * 0.5;
   if (s.toastT > 0) s.toastT -= dt;
   const p = s.player;
   const actions = input.takeActions();
   if (actions & ACTION_MUTE) { const m = audio.toggleMute(); toast(m ? 'Sound muted (M to unmute)' : 'Sound on'); }
-  if (actions & ACTION_PAUSE) { s.screen = SCREEN_PAUSED; announce('Paused.'); return; }
+  if (actions & ACTION_PAUSE) {
+    if (s.garageOpen) { s.garageOpen = false; return; }
+    s.screen = SCREEN_PAUSED; announce('Paused.'); return;
+  }
+  // Garage shop: G near the garage opens it; the world freezes while shopping.
+  s.nearGarage = !p.inCar && isNearGarage(p);
+  if (s.nearGarage) refillNitro(p.upgrades); // nitro refills free at the garage
+  if (actions & ACTION_GARAGE) {
+    if (s.garageOpen) { s.garageOpen = false; }
+    else if (s.nearGarage) { s.garageOpen = true; s.garageSel = 0; s.garageMsg = ''; refillNitro(p.upgrades); audio.blip(); }
+  }
+  if (s.garageOpen) {
+    for (let i = 0; i < 5; i++) {
+      if (input.keys.has('Digit' + (i + 1))) {
+        s.garageSel = i;
+        const r = buyUpgrade(p.upgrades, p, UPGRADES[i].id);
+        s.garageMsg = r.reason;
+        if (r.ok) { audio.pickup(); saveGame(); }
+        input.keys.delete('Digit' + (i + 1));
+      }
+    }
+    return;
+  }
   // Driving or walking.
   if (p.inCar) {
-    stepDriving(p.inCar, dt, input, s.city, audio);
+    stepDriving(p.inCar, dt, input, s.city, audio, p.upgrades);
     p.x = p.inCar.x; p.y = p.inCar.y; p.angle = p.inCar.angle;
     if (actions & ACTION_ENTER) { exitCar(p, s.city); audio.engineOff(); }
   } else {
@@ -165,7 +239,7 @@ function stepGame(dt) {
       if (tryEnterCar(p, s.cars, audio)) { toast(p.inCar.stolen ? 'Car stolen! The cops noticed.' : 'In the car — drive!'); audio.blip(); }
     }
     if (input.takeClick()) shoot(s.combat, p.x, p.y, p.aimAngle || p.angle, audio);
-    if (input.keys.has('Space')) {
+    if (actions & ACTION_PUNCH) {
       const hits = punch(s.combat, p.x, p.y, p.angle, s.peds, s.combat.enemies, p, audio);
       if (hits > 0) { addWanted(p, 1); toast('You started a fight!'); }
     }
@@ -190,11 +264,18 @@ function stepGame(dt) {
     }
   }
   // Pickups.
+  ensureCrates();
   for (const pk of s.pickups) {
     if (dist(p.x, p.y, pk.x, pk.y) < 34) {
       if (pk.kind === 'health') { p.health = Math.min(100, p.health + 40); toast('Health restored +40'); }
-      else { p.money += 100; p.score += 100; toast('Found cash +$100'); }
-      audio.pickup(); s.pickups.splice(s.pickups.indexOf(pk), 1); break;
+      else if (pk.kind === 'crate') {
+        s.missionState.collectThisStep = (s.missionState.collectThisStep || 0) + 1;
+        const st = currentStep(s.missionState);
+        toast('Crate secured (' + s.missionState.collectThisStep + '/' + (st ? st.count : 3) + ')');
+        audio.crate();
+      } else { p.money += 100; p.score += 100; toast('Found cash +$100'); }
+      if (pk.kind !== 'crate') audio.pickup();
+      s.pickups.splice(s.pickups.indexOf(pk), 1); break;
     }
   }
   // Missions.
@@ -207,7 +288,15 @@ function stepGame(dt) {
     }
   }
   const res = stepObjective(s.missionState, p, endMissionReward);
-  if (res === 'step') { audio.pickup(); toast('Objective done — next step!'); }
+  if (res === 'step') {
+    audio.pickup(); toast('Objective done — next step!');
+    // A step that needs heat (mission 7 escape) brings the heat with it.
+    const st = currentStep(s.missionState);
+    if (st && st.minWanted && p.wanted < st.minWanted) {
+      addWanted(p, st.minWanted - p.wanted);
+      toast('The fixer called the cops — lose them at the hideout!');
+    }
+  }
   // Side jobs.
   s.sideJobTimer -= dt;
   if (s.sideJobTimer <= 0 && !s.missionState.sideJob) {
@@ -242,7 +331,7 @@ function handleMenuActions() {
   const actions = input.takeActions();
   if (actions & ACTION_MUTE) audio.toggleMute();
   if (actions & ACTION_START || input.takeClick()) startPlaying(false);
-  if (input.keys.has('KeyC')) startPlaying(true); // Continue from save
+  if (actions & ACTION_CONTINUE) startPlaying(true); // Continue from save
 }
 function handleEndActions() {
   const actions = input.takeActions();
@@ -272,9 +361,13 @@ function stageShot(name) {
   const rnd = mulberry32(seed);
   if (name === 'menu') { s.screen = SCREEN_MENU; updateObjective(); }
   else if (name === 'street') {
-    s.screen = SCREEN_PLAY; s.player.x = 1600; s.player.y = 1100;
-    s.player.money = 1250; s.player.score = 1250; s.player.wanted = 0;
-    s.missionState.active = true; s.missionState.index = 0; s.missionState.step = 0;
+    // Marina district: Rico on foot among the warehouses and docks, mission 6 live.
+    s.screen = SCREEN_PLAY; s.player.x = 2750; s.player.y = 1800;
+    s.player.money = 3200; s.player.score = 3200; s.player.wanted = 0;
+    s.missionState.active = true; s.missionState.index = 5; s.missionState.step = 0;
+    s.missionState.collectThisStep = 1;
+    for (const c of currentStep(s.missionState).crates) s.pickups.push({ x: c.x, y: c.y, kind: 'crate' });
+    s.cratesSpawnedFor = 50;
     updateObjective();
   } else if (name === 'chase') {
     s.screen = SCREEN_PLAY;
@@ -282,19 +375,26 @@ function stageShot(name) {
     s.player.inCar = car; car.driver = 'player'; car.occupied = true; car.speed = 300;
     car.x = 1600; car.y = 1200; car.angle = 0;
     s.player.x = car.x; s.player.y = car.y;
-    s.player.wanted = 3; s.player.money = 2850; s.player.score = 2850;
+    s.player.wanted = 4; s.player.money = 4200; s.player.score = 4200;
     s.missionState.active = true; s.missionState.index = 3; s.missionState.step = 1;
     for (let i = 0; i < 2; i++) {
       const pc = makeCar(1380 - i * 120, 1200 + (i % 2 ? 40 : -40), 0, 'police', '#2f6fd0');
       s.police.push(pc); s.cars.push(pc);
     }
+    // Roadblock across the road ahead of Rico (wanted 4).
+    const rb1 = makeCar(1900, 1200 - 55, Math.PI / 2, 'police', '#2f6fd0');
+    const rb2 = makeCar(1900, 1200 + 55, Math.PI / 2, 'police', '#2f6fd0');
+    s.cars.push(rb1, rb2);
+    s.roadblocks.push({ x: 1900, y: 1200, cars: [rb1, rb2] });
     updateObjective();
   } else if (name === 'mission') {
+    // Mission 6 "Harbor Lights": Rico at the marina, crates on the ground.
     s.screen = SCREEN_PLAY;
-    s.player.x = 1250; s.player.y = 850; s.player.money = 1900; s.player.score = 1900;
-    s.missionState.active = true; s.missionState.index = 2; s.missionState.step = 0;
-    spawnEnemies(s.combat, 1250, 850, 2, 'thug');
-    s.missionState.killsThisStep = 0; s.enemiesSpawnedFor = 20;
+    s.player.x = 2700; s.player.y = 2000; s.player.money = 2600; s.player.score = 2600;
+    s.missionState.active = true; s.missionState.index = 5; s.missionState.step = 0;
+    s.missionState.collectThisStep = 0;
+    for (const c of currentStep(s.missionState).crates) s.pickups.push({ x: c.x, y: c.y, kind: 'crate' });
+    s.cratesSpawnedFor = 50;
     updateObjective();
   }
   updateObjective();
@@ -316,6 +416,20 @@ window.__game = {
   teleport: (x, y) => { s.player.x = x; s.player.y = y; if (s.player.inCar) { s.player.inCar.x = x; s.player.inCar.y = y; } },
   setWanted: (n) => { s.player.wanted = n; },
   enterNearestCar: () => tryEnterCar(s.player, s.cars, audio),
+  openGarage: () => {
+    if (!isNearGarage(s.player) || s.player.inCar) return false;
+    s.garageOpen = true; s.garageSel = 0; s.garageMsg = ''; refillNitro(s.player.upgrades);
+    return true;
+  },
+  closeGarage: () => { s.garageOpen = false; },
+  buyUpgrade: (id) => {
+    const r = buyUpgrade(s.player.upgrades, s.player, id);
+    s.garageMsg = r.reason;
+    if (r.ok) saveGame();
+    return r;
+  },
+  get upgrades() { return s.player.upgrades; },
+  get roadblocks() { return s.roadblocks; },
   newGame: () => { s = newGameState(); updateObjective(); },
 };
 updateObjective();

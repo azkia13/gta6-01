@@ -6,10 +6,15 @@ export function createCombat() {
 export function spawnEnemies(combat, x, y, count, kind) {
   combat.enemies = [];
   for (let i = 0; i < count; i++) {
+    // The fixer (mission 7 finale) is a real boss: triple health, faster trigger
+    // finger, and he holds his ground longer than his guards.
+    const isFixer = kind === 'fixer' && i === 0;
     combat.enemies.push({
       x: x + (Math.random() - 0.5) * 180, y: y + (Math.random() - 0.5) * 180,
-      hp: 50, speed: 95 + Math.random() * 40, angle: 0, kind: kind || 'thug',
-      shootCd: 1 + Math.random() * 2, alive: true, flash: 0,
+      hp: isFixer ? 150 : 50, speed: isFixer ? 70 : 95 + Math.random() * 40, angle: 0,
+      // A 'fixer' squad is one boss plus guards; other squads keep their kind.
+      kind: kind === 'fixer' ? (isFixer ? 'fixer' : 'thug') : (kind || 'thug'),
+      shootCd: isFixer ? 0.6 + Math.random() : 1 + Math.random() * 2, alive: true, flash: 0,
     });
   }
   return combat.enemies;

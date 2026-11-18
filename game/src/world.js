@@ -32,8 +32,37 @@ export function generateCity(seed) {
     }
   }
   for (let i = 0; i < 6; i++) lots.push({ x: 260 + i * 480, y: 300 + (i % 2) * 800, w: 150, h: 70 });
+  // Marina District (south-east corner): warehouses, docks jutting into the
+  // beach shallows, moored boats. Generated blocks under a warehouse are cleared
+  // so the district reads as its own place instead of overlapping buildings.
+  const marinaWarehouses = [
+    { x: 2480, y: 1680, w: 200, h: 120 },
+    { x: 2900, y: 1680, w: 180, h: 120 },
+    { x: 2480, y: 1860, w: 200, h: 80 },
+    { x: 2900, y: 1860, w: 180, h: 80 },
+  ];
+  const marinaDocks = [
+    { x: 2500, y: 2140, w: 44, h: 190 },
+    { x: 2800, y: 2140, w: 44, h: 190 },
+    { x: 3080, y: 2140, w: 44, h: 160 },
+  ];
+  const marinaBoats = [
+    { x: 2560, y: 2350, w: 96, h: 34, angle: 0.12 },
+    { x: 2860, y: 2360, w: 110, h: 36, angle: -0.08 },
+    { x: 3130, y: 2345, w: 84, h: 30, angle: 0.2 },
+    { x: 2420, y: 2355, w: 80, h: 30, angle: -0.15 },
+  ];
+  const overlapsMarina = (b) => marinaWarehouses.some((w) =>
+    b.x < w.x + w.w && b.x + b.w > w.x && b.y < w.y + w.h && b.y + b.h > w.y);
+  const kept = buildings.filter((b) => !overlapsMarina(b));
+  buildings.length = 0;
+  for (const b of kept) buildings.push(b);
+  for (const w of marinaWarehouses) {
+    buildings.push({ x: w.x, y: w.y, w: w.w, h: w.h, color: 4, height: 1, label: 'WAREHOUSE' });
+  }
+  const marina = { x: 2350, y: 1550, w: 800, h: 800, label: 'MARINA', docks: marinaDocks, boats: marinaBoats, warehouses: marinaWarehouses };
   return {
-    seed, buildings, parks, lots, roadsX, roadsY,
+    seed, buildings, parks, lots, roadsX, roadsY, marina,
     beach: { y: WORLD.height - 260 },
     pier: { x: 1500, y: WORLD.height - 260, w: 90, h: 230 },
     plaza: { x: 1480, y: 980, w: 240, h: 240 },

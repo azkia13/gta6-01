@@ -3,9 +3,11 @@
 // (game/index.html and its ES modules, no library and no network request), and the program
 // hands it in. It copies game/ and screenshots/ from beside this file to /output and writes
 // /output/dossier.json, the summary the judge reads, with the vendored make.fun library.
-// The game itself is an original open-world crime game: the coastal city of Porto Verde,
-// Rico Vega's fixer story, traffic, pedestrians, police and a wanted level, five story
-// missions plus side jobs, combat, a HUD with minimap, save/load and synthesised sound.
+// The game itself is an original open-world crime game: the coastal city of Porto Verde
+// (now with a Marina district in the south-east), Rico Vega's fixer story across seven
+// story missions, traffic, pedestrians, police with roadblocks and ramming, a wanted
+// level, garage upgrades bought with cash, combat, a HUD with minimap, save/load and
+// synthesised sound.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:

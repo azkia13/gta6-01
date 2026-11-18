@@ -39,6 +39,10 @@ export function createAudio() {
     isMuted() { return muted; },
     blip() { tone(880, 0.09, 'sine', 0.18, 1320); },
     pickup() { tone(660, 0.08, 'sine', 0.2, 990); setTimeout(() => tone(990, 0.12, 'sine', 0.2, 1320), 70); },
+    // Wooden crate thud + chime for the marina smuggling crates (mission 6).
+    crate() { noise(0.12, 0.3, true); tone(440, 0.1, 'triangle', 0.2, 660); setTimeout(() => tone(880, 0.14, 'sine', 0.2, 1174), 80); },
+    // Nitro whoosh: rising sawtooth sweep while the boost fires.
+    nitro() { tone(180, 0.9, 'sawtooth', 0.16, 920); noise(0.7, 0.12, false); },
     gunshot() { noise(0.14, 0.4, false); tone(160, 0.1, 'sawtooth', 0.2, 60); },
     punch() { noise(0.08, 0.3, true); },
     crash() { noise(0.25, 0.35, true); tone(90, 0.25, 'sawtooth', 0.2, 40); },

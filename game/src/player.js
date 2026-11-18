@@ -1,11 +1,14 @@
 // Rico Vega on foot: movement, entering/exiting cars, health, wanted heat.
+// Garage upgrades live on the player (see garage.js) and survive in the save.
 import { PLAYER, WORLD, clamp, dist } from './config.js';
 import { collideBuildings, clampToWorld } from './world.js';
+import { createUpgrades, armorFactor } from './garage.js';
 export function createPlayer(x, y) {
   return {
     x, y, angle: -Math.PI / 2, speed: 0, health: PLAYER.maxHealth,
     money: 250, wanted: 0, wantedTimer: 0, inCar: null, invuln: 0,
     score: 0, kills: 0, crimes: 0, onFoot: true,
+    upgrades: createUpgrades(),
   };
 }
 export function addWanted(p, n) {
@@ -64,7 +67,9 @@ export function exitCar(p, city) {
 }
 export function damagePlayer(p, amount) {
   if (p.invuln > 0) return false;
-  p.health -= amount;
+  // Fitted armor soaks part of every hit (ramming, punches, bullets).
+  const soaked = amount * (p.upgrades ? armorFactor(p.upgrades) : 1);
+  p.health -= soaked;
   p.invuln = 0.35;
   return p.health <= 0;
 }

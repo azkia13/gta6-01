@@ -1,6 +1,6 @@
 // Story missions for Porto Verde + free-roam side jobs (taxi fares, package drops).
 // Rico Vega, a driver-for-hire, is pulled back into the fixer game by his old contact
-// Mama Luz. Five story missions, then the finale pays out and the story completes.
+// Mama Luz. Seven story missions, then the finale pays out and the story completes.
 import { dist } from './config.js';
 export const MISSIONS = [
   {
@@ -36,16 +36,40 @@ export const MISSIONS = [
     ],
   },
   {
-    id: 5, title: 'King of Porto Verde', reward: 2500,
-    intro: 'Mama Luz: "One last job, Rico. The fixer who betrayed us is at the north docks with his guards. End it — then the city is yours."',
+    id: 5, title: 'The Fixer Slips the Net', reward: 1500,
+    intro: 'Mama Luz: "The fixer was at the north docks — but his guards bought him time and he slipped away to the marina. Hit his crew, then follow him. This is not over."',
     steps: [
-      { type: 'fight', label: 'Defeat the fixer and his guards (3)', x: 2600, y: 420, r: 150, count: 3 },
+      { type: 'fight', label: 'Defeat the fixer\'s guards at the north docks (3)', x: 2600, y: 420, r: 150, count: 3 },
+      { type: 'goto', label: 'Search the docks for where the fixer fled', x: 2600, y: 420, r: 90 },
+    ],
+  },
+  {
+    id: 6, title: 'Harbor Lights', reward: 2000,
+    intro: 'Mama Luz: "The fixer is hiding his smuggled goods in the Marina district, south-east by the docks. Collect the three crates, then deliver them to the pier. Quietly."',
+    steps: [
+      {
+        type: 'collect', label: 'Collect the smuggled crates at the marina', count: 3,
+        crates: [
+          { x: 2800, y: 1780, r: 40 },
+          { x: 2400, y: 2100, r: 40 },
+          { x: 3000, y: 2000, r: 40 },
+        ],
+      },
+      { type: 'goto', label: 'Deliver the crates to the pier', x: 1545, y: 2140, r: 70 },
+    ],
+  },
+  {
+    id: 7, title: 'King of the Verde', reward: 3000,
+    intro: 'Mama Luz: "The fixer is cornered at the north docks with his last guards. End it, lose the cops on the way to the hideout, then come home. The city will be yours, Rico."',
+    steps: [
+      { type: 'fight', label: 'Defeat the fixer and his guards (5)', x: 2600, y: 420, r: 150, count: 5 },
+      { type: 'escape', label: 'Escape to the hideout with the cops behind you', x: 2700, y: 500, r: 100, minWanted: 2 },
       { type: 'goto', label: 'Meet Mama Luz at the plaza — story complete', x: 1600, y: 1100, r: 90 },
     ],
   },
 ];
 export function createMissionState() {
-  return { index: 0, step: 0, active: false, done: 0, message: '', sideJob: null, sideTimer: 0, enemies: [] };
+  return { index: 0, step: 0, active: false, done: 0, message: '', sideJob: null, sideTimer: 0, enemies: [], collectThisStep: 0 };
 }
 export function currentMission(ms) { return MISSIONS[ms.index] || null; }
 export function currentStep(ms) {
@@ -55,7 +79,7 @@ export function currentStep(ms) {
 export function startMission(ms) {
   const m = currentMission(ms);
   if (!m) return null;
-  ms.active = true; ms.step = 0; ms.message = m.intro;
+  ms.active = true; ms.step = 0; ms.message = m.intro; ms.collectThisStep = 0; ms.killsThisStep = 0;
   return m;
 }
 export function missionObjectiveText(ms) {
@@ -63,7 +87,11 @@ export function missionObjectiveText(ms) {
   if (!m) return 'Story complete — free roam!';
   if (!ms.active) return 'Press ENTER to start: ' + m.title;
   const s = currentStep(ms);
-  return 'Mission ' + m.id + ' — ' + m.title + ': ' + (s ? s.label : '');
+  if (!s) return 'Mission ' + m.id + ' — ' + m.title;
+  let label = s.label;
+  if (s.type === 'collect') label += ' (' + (ms.collectThisStep || 0) + '/' + (s.count || 1) + ')';
+  if (s.type === 'escape' && s.minWanted) label += ' (wanted ' + s.minWanted + '+)';
+  return 'Mission ' + m.id + ' — ' + m.title + ': ' + label;
 }
 export function stepObjective(ms, player, onComplete) {
   // Returns 'mission-complete' | 'step' | null. Caller handles rewards.
@@ -73,8 +101,13 @@ export function stepObjective(ms, player, onComplete) {
   if (!s) return null;
   const px = player.inCar ? player.inCar.x : player.x;
   const py = player.inCar ? player.inCar.y : player.y;
-  if (s.type === 'goto' || s.type === 'escape') {
+  if (s.type === 'goto') {
     if (dist(px, py, s.x, s.y) < s.r) return advance(ms, onComplete);
+  }
+  if (s.type === 'escape') {
+    // A getaway only counts while the heat is on: the cops must be behind you.
+    const heat = s.minWanted || 0;
+    if (dist(px, py, s.x, s.y) < s.r && player.wanted >= heat) return advance(ms, onComplete);
   }
   if (s.type === 'steal') {
     if (player.inCar && player.inCar.stolen) return advance(ms, onComplete);
@@ -82,11 +115,15 @@ export function stepObjective(ms, player, onComplete) {
   if (s.type === 'fight') {
     if ((ms.killsThisStep || 0) >= (s.count || 1)) return advance(ms, onComplete);
   }
+  if (s.type === 'collect') {
+    // Crates are picked up by walking/driving over them (main.js counts them).
+    if ((ms.collectThisStep || 0) >= (s.count || 1)) return advance(ms, onComplete);
+  }
   return null;
 }
 function advance(ms, onComplete) {
   const m = currentMission(ms);
-  ms.step += 1; ms.killsThisStep = 0;
+  ms.step += 1; ms.killsThisStep = 0; ms.collectThisStep = 0;
   if (ms.step >= m.steps.length) {
     ms.done += 1; ms.active = false; ms.index += 1;
     if (onComplete) onComplete(m);

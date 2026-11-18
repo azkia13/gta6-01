@@ -1,5 +1,8 @@
 // Keyboard + mouse input. Held keys steer; one-shot actions queue as flags.
-export const ACTION_START = 1, ACTION_PAUSE = 2, ACTION_ENTER = 4, ACTION_MUTE = 8;
+// G opens the garage shop when Rico is standing by the garage (700,500).
+// Space (punch) and C (continue) latch as one-shot actions so a quick tap is
+// never lost between frames — held-key sampling alone can miss a short press.
+export const ACTION_START = 1, ACTION_PAUSE = 2, ACTION_ENTER = 4, ACTION_MUTE = 8, ACTION_GARAGE = 16, ACTION_PUNCH = 32, ACTION_CONTINUE = 64;
 export function createInput(canvas) {
   const keys = new Set();
   let queued = 0;
@@ -8,9 +11,12 @@ export function createInput(canvas) {
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
     keys.add(e.code);
     if (e.code === 'Enter' || e.code === 'Space') queued |= ACTION_START;
+    if (e.code === 'Space') queued |= ACTION_PUNCH;
+    if (e.code === 'KeyC') queued |= ACTION_CONTINUE;
     if (e.code === 'KeyP' || e.code === 'Escape') queued |= ACTION_PAUSE;
     if (e.code === 'KeyE') queued |= ACTION_ENTER;
     if (e.code === 'KeyM') queued |= ACTION_MUTE;
+    if (e.code === 'KeyG') queued |= ACTION_GARAGE;
   };
   const up = (e) => keys.delete(e.code);
   const move = (e) => {

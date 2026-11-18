@@ -2,7 +2,7 @@
 import { WORLD, PALETTE, FONT, fmtMoney, fmtClock } from './config.js';
 export const SCREEN_MENU = 'menu', SCREEN_PLAY = 'play', SCREEN_PAUSED = 'paused';
 export const SCREEN_BUSTED = 'busted', SCREEN_WASTED = 'wasted', SCREEN_WIN = 'win';
-const BUILDING_COLORS = ['#c98a5e', '#7fa3c9', '#e0c06a', '#9b7ec2'];
+const BUILDING_COLORS = ['#c98a5e', '#7fa3c9', '#e0c06a', '#9b7ec2', '#8a7a5e'];
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
   const view = { w: 1280, h: 720, scale: 1, ox: 0, oy: 0 };
@@ -49,6 +49,15 @@ export function createRenderer(canvas) {
       const gx = (i * 733) % WORLD.width, gy = (i * 491) % (WORLD.height - 300);
       ctx.fillRect(gx, gy, 180, 120);
     }
+    // Marina District ground: teal yard tint under the south-east docks area,
+    // drawn before roads and buildings so they stay on top of it.
+    if (city.marina) {
+      const m = city.marina;
+      ctx.fillStyle = PALETTE.marinaWater;
+      ctx.fillRect(m.x, m.y, m.w, m.h);
+      ctx.fillStyle = 'rgba(255,255,255,0.08)';
+      for (let i = 0; i < 8; i++) ctx.fillRect(m.x + 40 + i * 90, m.y + 60 + (i % 3) * 120, 60, 4);
+    }
     // Parks.
     for (const pk of city.parks) {
       ctx.fillStyle = PALETTE.park; ctx.fillRect(pk.x, pk.y, pk.w, pk.h);
@@ -93,6 +102,25 @@ export function createRenderer(canvas) {
     // Hospital cross.
     ctx.fillStyle = '#e8e8e8'; ctx.fillRect(city.hospital.x, city.hospital.y, city.hospital.w, city.hospital.h);
     ctx.fillStyle = '#e5534b'; ctx.fillRect(city.hospital.x + 88, city.hospital.y + 30, 24, 80); ctx.fillRect(city.hospital.x + 58, city.hospital.y + 60, 84, 24);
+    // Marina District (south-east): docks, moored boats, district label.
+    if (city.marina) {
+      const m = city.marina;
+      for (const d of m.docks) {
+        ctx.fillStyle = PALETTE.pier; ctx.fillRect(d.x, d.y, d.w, d.h);
+        ctx.fillStyle = '#6d4f36';
+        for (let i = 0; i < Math.floor(d.h / 26); i++) ctx.fillRect(d.x + 6, d.y + 10 + i * 26, d.w - 12, 4);
+      }
+      for (const b of m.boats) {
+        ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.angle);
+        ctx.fillStyle = PALETTE.boatHull;
+        ctx.beginPath(); ctx.moveTo(-b.w / 2, -b.h / 2); ctx.lineTo(b.w / 2, -b.h / 2); ctx.lineTo(b.w / 2 - 10, b.h / 2); ctx.lineTo(-b.w / 2 + 10, b.h / 2); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = PALETTE.boatCabin; ctx.fillRect(-b.w / 4, -b.h / 4, b.w / 2, b.h / 2);
+        ctx.restore();
+      }
+      ctx.fillStyle = 'rgba(10,14,20,0.65)'; ctx.fillRect(m.x + 20, m.y + 16, 150, 34);
+      ctx.fillStyle = '#7ee8d8'; ctx.font = 'bold 22px ' + FONT; ctx.textAlign = 'left';
+      ctx.fillText('MARINA', m.x + 32, m.y + 24);
+    }
   }
   function drawMarker(s) {
     const t = s.missionTarget;
@@ -125,12 +153,37 @@ export function createRenderer(canvas) {
     for (const b of s.combat.bullets) {
       ctx.fillStyle = '#ffe66d'; ctx.beginPath(); ctx.arc(b.x, b.y, 3.5, 0, Math.PI * 2); ctx.fill();
     }
-    // Pickups (cash bags / health).
+    // Pickups (cash bags / health / smuggled crates).
     for (const pk of s.pickups) {
+      if (pk.kind === 'crate') {
+        ctx.fillStyle = PALETTE.crate; ctx.fillRect(pk.x - 14, pk.y - 14, 28, 28);
+        ctx.strokeStyle = PALETTE.crateEdge; ctx.lineWidth = 3;
+        ctx.strokeRect(pk.x - 14, pk.y - 14, 28, 28);
+        ctx.beginPath(); ctx.moveTo(pk.x - 14, pk.y - 14); ctx.lineTo(pk.x + 14, pk.y + 14);
+        ctx.moveTo(pk.x + 14, pk.y - 14); ctx.lineTo(pk.x - 14, pk.y + 14); ctx.stroke();
+        ctx.fillStyle = '#ffd23f'; ctx.font = 'bold 10px ' + FONT; ctx.textAlign = 'center';
+        ctx.fillText('CRATE', pk.x, pk.y - 22);
+        continue;
+      }
       ctx.fillStyle = pk.kind === 'health' ? '#ff6b6b' : '#ffd23f';
       ctx.beginPath(); ctx.arc(pk.x, pk.y, 12, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#20242c'; ctx.font = 'bold 12px ' + FONT; ctx.textAlign = 'center';
       ctx.fillText(pk.kind === 'health' ? '+' : '$', pk.x, pk.y - 4);
+    }
+    // Police roadblocks: striped barricade strung between the two cop cars.
+    for (const rb of s.roadblocks || []) {
+      const [a, b] = rb.cars;
+      if (!a || !b) continue;
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      const ang = Math.atan2(b.y - a.y, b.x - a.x);
+      ctx.save(); ctx.translate(mx, my); ctx.rotate(ang);
+      for (let i = -2; i <= 2; i++) {
+        ctx.fillStyle = i % 2 === 0 ? PALETTE.barricade : '#f4f1e6';
+        ctx.fillRect(i * 18, -6, 18, 12);
+      }
+      ctx.restore();
+      ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 12px ' + FONT; ctx.textAlign = 'center';
+      ctx.fillText('ROADBLOCK', mx, my - 26);
     }
     // Player.
     const p = s.player;
@@ -158,6 +211,13 @@ export function createRenderer(canvas) {
     for (const rx of s.city.roadsX) ctx.fillRect(mx + rx * sx - 2, my, 4, mh);
     for (const ry of s.city.roadsY) ctx.fillRect(mx, my + ry * sy, mw, 4);
     ctx.fillStyle = '#2f7fb8'; ctx.fillRect(mx, my + s.city.beach.y * sy, mw, mh - s.city.beach.y * sy);
+    // Marina district marking on the minimap.
+    if (s.city.marina) {
+      const m = s.city.marina;
+      ctx.fillStyle = '#2e8f8a'; ctx.fillRect(mx + m.x * sx, my + m.y * sy, m.w * sx, m.h * sy);
+      ctx.fillStyle = '#7ee8d8'; ctx.font = 'bold 9px ' + FONT; ctx.textAlign = 'center';
+      ctx.fillText('M', mx + (m.x + m.w / 2) * sx, my + (m.y + m.h / 2) * sy - 4);
+    }
     const t = s.missionTarget;
     if (t) { ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.arc(mx + t.x * sx, my + t.y * sy, 5, 0, Math.PI * 2); ctx.fill(); }
     for (const car of s.cars) if (car.police) { ctx.fillStyle = '#4f8ef7'; ctx.fillRect(mx + car.x * sx - 2, my + car.y * sy - 2, 4, 4); }
@@ -195,7 +255,10 @@ export function createRenderer(canvas) {
     // Speed + controls hint.
     const speed = p.inCar ? Math.round(Math.abs(p.inCar.speed) * 0.55) : 0;
     if (p.inCar) text(speed + ' km/h', view.w - 220, view.h - 60, 26, '#f4f1e6', 'right', true);
-    text(p.inCar ? 'WASD drive · E exit · M mute · P pause' : 'WASD walk · E steal car · Click shoot · Space punch · ENTER mission', view.w - 16, view.h - 28, 13, '#c9c4b2', 'right');
+    text(p.inCar ? 'WASD drive · E exit · Shift nitro · M mute · P pause' : 'WASD walk · E steal car · Click shoot · Space punch · ENTER mission', view.w - 16, view.h - 28, 13, '#c9c4b2', 'right');
+    // Garage prompt + nitro charges.
+    if (s.nearGarage && !p.inCar) text('GARAGE — press G to open upgrades', view.w - 16, view.h - 96, 15, '#7ee787', 'right', true);
+    if (p.upgrades && p.upgrades.nitro) text('NITRO ×' + (p.upgrades.nitroCharges || 0) + ' (Shift to boost)', view.w - 220, view.h - 88, 14, '#ff9f43', 'right', true);
     // Toast message.
     if (s.toast && s.toastT > 0) {
       ctx.fillStyle = 'rgba(10,14,20,0.85)';
@@ -207,6 +270,29 @@ export function createRenderer(canvas) {
       const j = s.missionState.sideJob;
       text('SIDE JOB: ' + j.label + ' — ' + fmtMoney(j.reward) + ' (' + Math.ceil(s.missionState.sideTimer) + 's)', 22, 132, 14, '#7ee787', 'left', true);
     }
+  }
+  function drawGarage(s) {
+    // Canvas-drawn shop panel: upgrade list with prices, owned marks, cash.
+    const up = s.player.upgrades;
+    ctx.fillStyle = 'rgba(6,10,18,0.72)'; ctx.fillRect(0, 0, view.w, view.h);
+    const w = 780, h = 420;
+    const x = (view.w - w) / 2, y = (view.h - h) / 2;
+    ctx.fillStyle = 'rgba(12,16,24,0.96)'; ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = '#7ee787'; ctx.lineWidth = 3; ctx.strokeRect(x, y, w, h);
+    text('RICO\'S GARAGE — UPGRADES', view.w / 2, y + 24, 30, '#7ee787', 'center', true);
+    text('Cash: ' + fmtMoney(s.player.money) + '   ·   Nitro refills free here', view.w / 2, y + 66, 16, '#f4f1e6', 'center');
+    s.garageItems.forEach((u, i) => {
+      const iy = y + 108 + i * 48;
+      const owned = up.owned.includes(u.id);
+      const avail = !owned && (!u.needs || up.owned.includes(u.needs));
+      const afford = s.player.money >= u.price;
+      ctx.fillStyle = i === s.garageSel ? 'rgba(126,231,135,0.18)' : 'rgba(255,255,255,0.04)';
+      ctx.fillRect(x + 24, iy - 6, w - 48, 40);
+      text((i + 1) + '. ' + u.name + ' — ' + u.desc, x + 40, iy + 4, 16, owned ? '#7ee787' : (avail ? '#f4f1e6' : '#8a8578'));
+      text(owned ? 'INSTALLED' : fmtMoney(u.price), x + w - 40, iy + 4, 16, owned ? '#7ee787' : (afford ? '#ffd23f' : '#ff6b5e'), 'right', true);
+    });
+    text(s.garageMsg || 'Press 1-5 to buy, arrows to choose, G or Esc to leave', view.w / 2, y + h - 58, 16, '#ffd23f', 'center');
+    text('Engine and armor apply to every car you drive.', view.w / 2, y + h - 30, 13, '#c9c4b2', 'center');
   }
   function drawPanel(title, lines, prompt, color) {
     ctx.fillStyle = 'rgba(6,10,18,0.72)'; ctx.fillRect(0, 0, view.w, view.h);
@@ -243,12 +329,13 @@ export function createRenderer(canvas) {
         'An original open-world crime story. You are Rico Vega, driver-for-hire.',
         'Steal cars, outrun the police, run missions for Mama Luz — and take the city.',
         'WASD move / drive · E steal & exit cars · Mouse aim, click to shoot · Space punch',
-        'Missions: 5 story jobs + taxi fares & package drops · Save: automatic (localStorage)',
+        'Missions: 7 story jobs + taxi fares & package drops · Marina district & garage upgrades (G)',
         'Best score: ' + best + '   ·   M mute · P pause',
       ], 'Press ENTER or click to start', '#ffd23f');
       return;
     }
     drawHud(s);
+    if (s.garageOpen) { drawGarage(s); return; }
     if (screen === SCREEN_PAUSED) drawPanel('PAUSED', ['The city waits for you, Rico.', 'Your progress is saved.'], 'Press P or ENTER to resume');
     else if (screen === SCREEN_BUSTED) drawPanel('BUSTED!', ['The Porto Verde police caught you. Bail: $150.', 'Your mission progress is kept — try again.'], 'Press ENTER to get out and keep playing', '#4f8ef7');
     else if (screen === SCREEN_WASTED) drawPanel('WASTED', ['Rico went down. The hospital patched him up — $150.', 'Your mission progress is kept — try again.'], 'Press ENTER to get back on the street', '#ff6b5e');
