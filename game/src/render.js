@@ -1,5 +1,6 @@
 // Drawing only: camera, city, cars, people, HUD with minimap, menus, markers.
 import { WORLD, PALETTE, FONT, fmtMoney, fmtClock } from './config.js';
+import { darknessAt, skyOverlay, headlightBeam, lampPositions, phaseName } from './daynight.js';
 export const SCREEN_MENU = 'menu', SCREEN_PLAY = 'play', SCREEN_PAUSED = 'paused';
 export const SCREEN_BUSTED = 'busted', SCREEN_WASTED = 'wasted', SCREEN_WIN = 'win';
 const BUILDING_COLORS = ['#c98a5e', '#7fa3c9', '#e0c06a', '#9b7ec2', '#8a7a5e'];
@@ -25,19 +26,47 @@ export function createRenderer(canvas) {
   function drawCar(c) {
     ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(c.angle);
     ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(-24, -13, 48, 26);
-    ctx.fillStyle = c.police ? '#2f6fd0' : c.color;
-    ctx.fillRect(-23, -12, 46, 24);
-    ctx.fillStyle = c.police ? '#e8e8e8' : 'rgba(255,255,255,0.85)';
-    ctx.fillRect(-6, -10, 14, 20);
-    ctx.fillStyle = '#20242c'; ctx.fillRect(-20, -12, 6, 5); ctx.fillRect(-20, 7, 6, 5); ctx.fillRect(16, -12, 6, 5); ctx.fillRect(16, 7, 6, 5);
-    if (c.police) { ctx.fillStyle = '#ffd23f'; ctx.fillRect(-2, -12, 6, 24); }
-    ctx.fillStyle = '#fff8c9';
-    ctx.fillRect(20, -9, 3, 4); ctx.fillRect(20, 5, 3, 4);
-    ctx.restore();
+    if (c.bike) {
+      // Motorcycle: two wheels, slim frame, rider, single headlight.
+      ctx.fillStyle = '#15181d';
+      ctx.beginPath(); ctx.arc(-13, 0, 6, 0, Math.PI * 2); ctx.arc(13, 0, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = c.color; ctx.fillRect(-14, -4, 28, 8);
+      ctx.fillStyle = '#20242c'; ctx.fillRect(1, -3, 9, 6);
+      ctx.fillStyle = '#e8b06a'; ctx.beginPath(); ctx.arc(-2, 0, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff8c9'; ctx.fillRect(14, -2, 3, 4);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = c.police ? '#2f6fd0' : c.color;
+      ctx.fillRect(-23, -12, 46, 24);
+      ctx.fillStyle = c.police ? '#e8e8e8' : 'rgba(255,255,255,0.85)';
+      ctx.fillRect(-6, -10, 14, 20);
+      ctx.fillStyle = '#20242c'; ctx.fillRect(-20, -12, 6, 5); ctx.fillRect(-20, 7, 6, 5); ctx.fillRect(16, -12, 6, 5); ctx.fillRect(16, 7, 6, 5);
+      if (c.police) { ctx.fillStyle = '#ffd23f'; ctx.fillRect(-2, -12, 6, 24); }
+      ctx.fillStyle = '#fff8c9';
+      ctx.fillRect(20, -9, 3, 4); ctx.fillRect(20, 5, 3, 4);
+      ctx.restore();
+    }
     if (c.kind === 'parked' || c.kind === 'player') {
       ctx.fillStyle = 'rgba(255,210,63,0.9)';
       ctx.font = 'bold 11px ' + FONT; ctx.textAlign = 'center';
-      ctx.fillText(c.kind === 'player' ? 'YOUR CAR' : 'E — STEAL', c.x, c.y - 30);
+      ctx.fillText(c.kind === 'player' ? 'YOUR CAR' : (c.bike ? 'BIKE — E' : 'E — STEAL'), c.x, c.y - 30);
+    }
+  }
+  // Night lighting, drawn in world space after the entities: street lamps pool
+  // light at the junctions and every moving car throws a headlight cone.
+  function drawNightLights(s) {
+    const d = darknessAt(s.clock);
+    if (d < 0.25) return;
+    const lamps = lampPositions(s.city);
+    ctx.fillStyle = 'rgba(255,214,120,' + (d * 0.16).toFixed(3) + ')';
+    for (const lamp of lamps) { ctx.beginPath(); ctx.arc(lamp.x, lamp.y, 46, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = '#ffe9a8';
+    for (const lamp of lamps) { ctx.beginPath(); ctx.arc(lamp.x, lamp.y, 4, 0, Math.PI * 2); ctx.fill(); }
+    for (const c of s.cars) {
+      if (c.kind === 'parked') continue;
+      const fx = c.x + Math.cos(c.angle) * (c.bike ? 16 : 24);
+      const fy = c.y + Math.sin(c.angle) * (c.bike ? 16 : 24);
+      headlightBeam(ctx, fx, fy, c.angle, c.bike ? 190 : 250, c.bike ? 34 : 52);
     }
   }
   function drawWorld(s) {
@@ -200,6 +229,42 @@ export function createRenderer(canvas) {
       }
       ctx.restore();
     }
+    // Police helicopter circling overhead, spotlight pinned on Rico.
+    if (s.heli && s.heli.active) {
+      const h = s.heli, p = s.player;
+      const pa = Math.atan2(p.y - h.y, p.x - h.x);
+      const perp = pa + Math.PI / 2;
+      const sg = ctx.createLinearGradient(h.x, h.y, p.x, p.y);
+      sg.addColorStop(0, 'rgba(255,244,180,0.30)');
+      sg.addColorStop(1, 'rgba(255,244,180,0.08)');
+      ctx.fillStyle = sg;
+      ctx.beginPath();
+      ctx.moveTo(h.x, h.y);
+      ctx.lineTo(p.x + Math.cos(perp) * 55, p.y + Math.sin(perp) * 55);
+      ctx.lineTo(p.x - Math.cos(perp) * 55, p.y - Math.sin(perp) * 55);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,244,180,0.22)';
+      ctx.beginPath(); ctx.arc(p.x, p.y, 46, 0, Math.PI * 2); ctx.fill();
+      ctx.save(); ctx.translate(h.x, h.y); ctx.rotate(h.orbit + Math.PI / 2);
+      ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(4, 6, 22, 12, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#42566e'; ctx.beginPath(); ctx.ellipse(0, 0, 20, 11, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#c8d4e4'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = '#2f6fd0'; ctx.fillRect(-34, -3, 18, 6);
+      ctx.fillStyle = '#9fd0ff'; ctx.beginPath(); ctx.ellipse(8, 0, 7, 5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(230,235,240,0.85)'; ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(h.rotor) * 26, Math.sin(h.rotor) * 26);
+      ctx.lineTo(-Math.cos(h.rotor) * 26, -Math.sin(h.rotor) * 26);
+      ctx.stroke();
+      ctx.restore();
+      if (Math.sin(s.time * 6) > 0) {
+        ctx.fillStyle = '#ff4b3e';
+        ctx.beginPath(); ctx.arc(h.x, h.y - 12, 4, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 11px ' + FONT; ctx.textAlign = 'center';
+      ctx.fillText('POLICE HELI', h.x, h.y - 30);
+    }
   }
   function drawMinimap(s) {
     const mw = 200, mh = 150, mx = view.w - mw - 16, my = 16;
@@ -221,6 +286,10 @@ export function createRenderer(canvas) {
     const t = s.missionTarget;
     if (t) { ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.arc(mx + t.x * sx, my + t.y * sy, 5, 0, Math.PI * 2); ctx.fill(); }
     for (const car of s.cars) if (car.police) { ctx.fillStyle = '#4f8ef7'; ctx.fillRect(mx + car.x * sx - 2, my + car.y * sy - 2, 4, 4); }
+    if (s.heli && s.heli.active) {
+      ctx.fillStyle = '#ff8a7a';
+      ctx.beginPath(); ctx.arc(mx + s.heli.x * sx, my + s.heli.y * sy, 4, 0, Math.PI * 2); ctx.fill();
+    }
     const p = s.player;
     const px = p.inCar ? p.inCar.x : p.x, py = p.inCar ? p.inCar.y : p.y;
     ctx.fillStyle = '#ffcf3f'; ctx.beginPath(); ctx.arc(mx + px * sx, my + py * sy, 5, 0, Math.PI * 2); ctx.fill();
@@ -251,7 +320,7 @@ export function createRenderer(canvas) {
     ctx.fillRect(12, view.h - 96, Math.min(900, 24 + obj.length * 8.4), 44);
     ctx.fillStyle = '#ffd23f'; ctx.fillRect(12, view.h - 96, 5, 44);
     text(obj, 28, view.h - 84, 16, '#f4f1e6');
-    text(fmtClock(s.clock) + '  PORTO VERDE', 28, view.h - 62, 12, '#c9c4b2');
+    text(fmtClock(s.clock) + '  ' + phaseName(s.clock).toUpperCase() + '  PORTO VERDE', 28, view.h - 62, 12, '#c9c4b2');
     // Speed + controls hint.
     const speed = p.inCar ? Math.round(Math.abs(p.inCar.speed) * 0.55) : 0;
     if (p.inCar) text(speed + ' km/h', view.w - 220, view.h - 60, 26, '#f4f1e6', 'right', true);
@@ -318,18 +387,22 @@ export function createRenderer(canvas) {
     drawWorld(s);
     drawMarker(s);
     drawEntities(s);
+    drawNightLights(s);
     ctx.restore();
     // Sun gradient overlay for the coastal look.
     const g = ctx.createLinearGradient(0, 0, 0, view.h);
     g.addColorStop(0, 'rgba(255,190,90,0.10)'); g.addColorStop(1, 'rgba(255,120,60,0.06)');
     ctx.fillStyle = g; ctx.fillRect(0, 0, view.w, view.h);
+    // Night falls over the city: dusk warms it, night darkens it (HUD stays lit).
+    const night = skyOverlay(s.clock);
+    if (night) { ctx.fillStyle = night; ctx.fillRect(0, 0, view.w, view.h); }
     if (screen === SCREEN_MENU) {
       drawWorldPreview(s);
       drawPanel('PORTO VERDE', [
         'An original open-world crime story. You are Rico Vega, driver-for-hire.',
         'Steal cars, outrun the police, run missions for Mama Luz — and take the city.',
         'WASD move / drive · E steal & exit cars · Mouse aim, click to shoot · Space punch',
-        'Missions: 7 story jobs + taxi fares & package drops · Marina district & garage upgrades (G)',
+        'Missions: 7 story jobs + side jobs · Marina, day/night cycle, bikes & garage (G)',
         'Best score: ' + best + '   ·   M mute · P pause',
       ], 'Press ENTER or click to start', '#ffd23f');
       return;

@@ -5,6 +5,11 @@ export const PLAYER = { walkSpeed: 230, runSpeed: 330, radius: 14, maxHealth: 10
 export const CAR = { accel: 520, maxSpeed: 430, reverse: 160, turn: 2.6, brake: 700 };
 export const WANTED = { decayDelay: 9, decayRate: 0.35, max: 5 };
 export const GARAGE = { x: 700, y: 500, r: 110, nitroCharges: 3 };
+// Motorcycles: quicker off the line and sharper in the turn than any car,
+// with a higher top speed — but no roof, so every crash hurts the same.
+export const BIKE = { accelMul: 1.3, turnMul: 1.55, topBonus: 55 };
+// Police helicopter: sent up at 5 stars, circles at this radius and speed.
+export const HELI = { atWanted: 5, orbitR: 280, orbitSpeed: 0.4 };
 // Marina district bounds (south-east corner) — see world.js generateCity.
 export const MARINA = { x: 2350, y: 1550, w: 800, h: 800, label: 'MARINA' };
 // Police escalation: roadblocks from wanted 3, ramming from wanted 4, 4 cops at 5.

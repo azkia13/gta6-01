@@ -1,16 +1,28 @@
 // Driving physics. `upgrades` (garage.js) is optional: engine tiers raise top speed
 // and a nitro kit lets the driver hold Shift for a boost while charges remain.
-import { CAR, WORLD, clamp, dist, mulberry32 } from './config.js';
+import { CAR, WORLD, BIKE, clamp, dist, mulberry32 } from './config.js';
 import { collideBuildings, isRoad } from './world.js';
 import { carTopSpeed, hasNitro, useNitro } from './garage.js';
 const CAR_COLORS = ['#e5534b', '#4fc3f7', '#f2c94c', '#e8e8e8', '#7ee787', '#ff9f43', '#c77dff', '#95a5a6'];
+const BIKE_COLORS = ['#e5534b', '#ffd23f', '#4fc3f7', '#ff9f43', '#c77dff'];
 const MODELS = ['Sedan', 'Coupe', 'Van', 'Taxi', 'Pickup', 'Sport'];
 export function makeCar(x, y, angle, kind, color) {
   return {
     x, y, angle, speed: 0, kind: kind || 'traffic', color: color || CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)],
-    model: MODELS[Math.floor(Math.random() * MODELS.length)], w: 46, h: 24,
+    model: MODELS[Math.floor(Math.random() * MODELS.length)], w: 46, h: 24, bike: false,
     stolen: false, occupied: false, driver: null, police: kind === 'police',
     targetAngle: angle, cruise: 90 + Math.random() * 70, honk: 0, stuck: 0, nitroT: 0,
+  };
+}
+// Motorcycles: same shape as a car object (so entering, driving and stealing
+// all work unchanged) but flagged bike, so physics and rendering treat them
+// as the nimble two-wheelers they are.
+export function makeBike(x, y, angle) {
+  return {
+    x, y, angle, speed: 0, kind: 'parked', color: BIKE_COLORS[Math.floor(Math.random() * BIKE_COLORS.length)],
+    model: 'Bike', w: 34, h: 14, bike: true,
+    stolen: false, occupied: false, driver: null, police: false,
+    targetAngle: angle, cruise: 0, honk: 0, stuck: 0, nitroT: 0,
   };
 }
 export function spawnTraffic(city, count, rnd) {
@@ -31,6 +43,10 @@ export function spawnTraffic(city, count, rnd) {
     cars.push(makeCar(lot.x + 90, lot.y + 20, 0, 'parked'));
   }
   cars.push(makeCar(1600, 800, 0, 'player', '#ffcf3f')); // Rico's own car, parked on the road by the plaza
+  // Parked motorcycles at roadside spots around the city — faster than any
+  // car off the line, and stealing one is a crime like any other.
+  const bikeSpots = [[1640, 800, 0], [2040, 1240, Math.PI], [840, 1640, Math.PI / 2], [2840, 2040, 0]];
+  for (const spot of bikeSpots) cars.push(makeBike(spot[0], spot[1], spot[2]));
   return cars;
 }
 function turnToward(car, target, dt, rate) {
@@ -92,19 +108,23 @@ export function stepPolice(car, dt, city, player) {
 export function stepDriving(car, dt, input, city, audio, upgrades) {
   const ax = input.axis();
   const fwd = ax.y < 0, back = ax.y > 0;
-  const topSpeed = upgrades ? carTopSpeed(upgrades) : CAR.maxSpeed;
+  // Bikes launch harder, turn sharper and run a higher top speed than cars;
+  // garage engine upgrades apply to them exactly like they do to cars.
+  const accel = CAR.accel * (car.bike ? BIKE.accelMul : 1);
+  const turnRate = CAR.turn * (car.bike ? BIKE.turnMul : 1);
+  const topSpeed = (upgrades ? carTopSpeed(upgrades) : CAR.maxSpeed) + (car.bike ? BIKE.topBonus : 0);
   // Nitro: hold Shift while moving forward; each boost burns one charge.
   let boosting = false;
   if (upgrades && fwd && input.run() && car.speed > 40) {
     if (car.nitroT > 0) { boosting = true; car.nitroT -= dt; }
     else if (hasNitro(upgrades) && useNitro(upgrades)) { boosting = true; car.nitroT = 1.1; if (audio) audio.nitro(); }
   }
-  if (fwd) car.speed += (boosting ? CAR.accel * 1.9 : CAR.accel) * dt;
-  else if (back) car.speed -= (car.speed > 5 ? CAR.brake : CAR.accel * 0.5) * dt;
+  if (fwd) car.speed += (boosting ? accel * 1.9 : accel) * dt;
+  else if (back) car.speed -= (car.speed > 5 ? CAR.brake : accel * 0.5) * dt;
   else car.speed -= Math.sign(car.speed) * Math.min(Math.abs(car.speed), 180 * dt);
   car.speed = clamp(car.speed, -CAR.reverse, boosting ? topSpeed + 170 : topSpeed);
   if (Math.abs(car.speed) > 8) {
-    const steer = ax.x * CAR.turn * (car.speed >= 0 ? 1 : -1) * clamp(Math.abs(car.speed) / 120, 0.3, 1);
+    const steer = ax.x * turnRate * (car.speed >= 0 ? 1 : -1) * clamp(Math.abs(car.speed) / 120, 0.3, 1);
     car.angle += steer * dt;
   }
   const nx = car.x + Math.cos(car.angle) * car.speed * dt;

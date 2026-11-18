@@ -10,10 +10,11 @@ You are **Rico Vega**, a driver-for-hire pulled back into the fixer game in the 
 
 ## What's in the game
 
-- **Open city** — road grid, building blocks, parks, plaza, hospital, beach and pier districts, Marina district with docks, moored boats and warehouses, day lighting
-- **On foot + driving** — walk/run, steal parked and traffic cars (E), drive with real physics, nitro boost (Shift) once fitted
+- **Open city** — road grid, building blocks, parks, plaza, hospital, beach and pier districts, Marina district with docks, moored boats and warehouses, day/night cycle with dusk and dawn light
+- **On foot + driving** — walk/run, steal parked and traffic cars (E), ride motorcycles (faster launch, sharper turn), drive with real physics, nitro boost (Shift) once fitted
 - **Traffic & pedestrians** — cars follow the roads, pedestrians wander and flee from danger, dockworkers stroll the Marina
-- **Wanted level (1–5 stars)** — rises on theft, hitting pedestrians and fights; police cars chase, ram (PIT-style at 4+ stars) and arrest; roadblocks at 3+ stars, up to 4 pursuit cars at 5 stars; heat decays when you hide
+- **Wanted level (1–5 stars)** — rises on theft, hitting pedestrians and fights; police cars chase, ram (PIT-style at 4+ stars) and arrest; roadblocks at 3+ stars, up to 4 pursuit cars at 5 stars; at 5 stars a police helicopter circles overhead with a spotlight and your heat cools four times slower; heat decays when you hide
+- **Headlights & lamps** — after dark every moving car throws a headlight cone and the street lamps at the junctions pool light; the HUD clock shows the time of day (dawn / day / dusk / night)
 - **Story missions (7)** — package runs, car theft, a market shakedown, a police getaway, the fixer slipping the net, smuggled crates at the Marina, and a final showdown with the fixer — with dialogue, markers, rewards
 - **Garage upgrades** — press G at the garage (700,500) to buy Engine Mk I/II, Armor, and a Nitro kit with cash; upgrades persist in your save, nitro refills free at the garage
 - **Side jobs** — taxi fares and package drops that pay cash
@@ -50,6 +51,8 @@ Node 22+ and a desktop browser. No build step, no dependencies.
 ## Structure
 
 - `game/src/config.js` — tuning, palette, seeded RNG
+- `game/src/daynight.js` — day/night cycle, sky tint, headlight cones, street lamps
+- `game/src/heli.js` — police helicopter at 5 wanted stars (orbit + spotlight)
 - `game/src/world.js` — city generation and collisions
 - `game/src/player.js` — Rico on foot, car entry, wanted heat
 - `game/src/vehicles.js` — traffic AI, police pursuit, driving physics

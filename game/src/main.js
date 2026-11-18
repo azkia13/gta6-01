@@ -1,7 +1,7 @@
 // Porto Verde — boot, loop, screens, wanted/police, missions, save/load, shot staging.
 // ?seed=N fixes the city. ?shot=chase|menu|street|mission stages that scene and sets
 // window.__shotReady. window.__game exposes live state for playtesting.
-import { WORLD, SAVE_KEY, BEST_KEY, POLICE, mulberry32, clamp, dist } from './config.js';
+import { WORLD, SAVE_KEY, BEST_KEY, POLICE, HELI, mulberry32, clamp, dist } from './config.js';
 import { generateCity } from './world.js';
 import { createPlayer, stepPlayer, tryEnterCar, exitCar, addWanted, damagePlayer } from './player.js';
 import { spawnTraffic, stepTraffic, stepPolice, stepDriving, makeCar, carHitsPed } from './vehicles.js';
@@ -12,6 +12,8 @@ import { createAudio } from './audio.js';
 import { createInput, ACTION_START, ACTION_PAUSE, ACTION_ENTER, ACTION_MUTE, ACTION_GARAGE, ACTION_PUNCH, ACTION_CONTINUE } from './input.js';
 import { createRenderer, SCREEN_MENU, SCREEN_PLAY, SCREEN_PAUSED, SCREEN_BUSTED, SCREEN_WASTED, SCREEN_WIN } from './render.js';
 import { UPGRADES, isNearGarage, buyUpgrade, refillNitro } from './garage.js';
+import { createHeli, spawnHeli, stepHeli } from './heli.js';
+import { darknessAt } from './daynight.js';
 
 const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
@@ -34,7 +36,7 @@ function newGameState() {
     combat: createCombat(),
     missionState: createMissionState(),
     pickups: [{ x: 1700, y: 1000, kind: 'health' }, { x: 900, y: 600, kind: 'cash' }, { x: 2400, y: 1500, kind: 'cash' }],
-    police: [], roadblocks: [], time: 0, clock: 8 * 60 + 15, toast: '', toastT: 0,
+    police: [], roadblocks: [], heli: null, time: 0, clock: 8 * 60 + 15, toast: '', toastT: 0,
     screen: SCREEN_MENU, best: readBest(), missionTarget: null, objectiveText: '',
     sideJobTimer: 12, enemiesSpawnedFor: -1, cratesSpawnedFor: -1,
     garageOpen: false, garageSel: 0, garageMsg: '', garageItems: UPGRADES, nearGarage: false,
@@ -144,9 +146,10 @@ function wantedTick(dt) {
   if (p.wanted > 0) {
     p.wantedTimer += dt;
     if (p.wantedTimer > 9) {
-      // Decay only while police are far away / player is hidden.
+      // Decay only while police are far away / player is hidden — and four
+      // times slower while the helicopter keeps its spotlight on Rico.
       const nearCop = s.police.some((c) => dist(c.x, c.y, p.x, p.y) < 320);
-      if (!nearCop) { p.wanted -= 0.35 * dt; if (p.wanted < 0) p.wanted = 0; }
+      if (!nearCop) { p.wanted -= 0.35 * dt * (s.heli ? 0.25 : 1); if (p.wanted < 0) p.wanted = 0; }
     }
     // Wanted 5 fields up to 4 pursuit cars; lower levels cap at 3.
     const want = Math.min(p.wanted >= 5 ? POLICE.maxCops : POLICE.maxCopsLow, Math.ceil(p.wanted));
@@ -157,9 +160,17 @@ function wantedTick(dt) {
     }
     if (p.wanted >= POLICE.roadblockAt && s.roadblocks.length === 0) spawnRoadblock();
     if (p.wanted < POLICE.roadblockAt && s.roadblocks.length > 0) clearRoadblocks();
+    // Five stars sends the helicopter up; it leaves when the heat drops.
+    if (p.wanted >= HELI.atWanted && !s.heli) {
+      s.heli = spawnHeli(createHeli(), p.x, p.y);
+      toast('POLICE HELICOPTER overhead — the spotlight keeps the heat on you!');
+      audio.crash();
+    }
+    if (p.wanted < HELI.atWanted && s.heli) s.heli = null;
   } else {
     for (const c of s.police) { const i = s.cars.indexOf(c); if (i >= 0) s.cars.splice(i, 1); }
     s.police = [];
+    s.heli = null;
     if (s.roadblocks.length > 0) clearRoadblocks();
   }
 }
@@ -253,6 +264,7 @@ function stepGame(dt) {
   stepPedestrians(s.peds, dt, s.city, p, p.wanted > 0);
   wantedTick(dt);
   policeTick(dt);
+  if (s.heli) stepHeli(s.heli, dt, p);
   audio.siren(p.wanted >= 2);
   // Car hits pedestrian = crime.
   if (p.inCar && Math.abs(p.inCar.speed) > 60) {
@@ -361,8 +373,9 @@ function stageShot(name) {
   const rnd = mulberry32(seed);
   if (name === 'menu') { s.screen = SCREEN_MENU; updateObjective(); }
   else if (name === 'street') {
-    // Marina district: Rico on foot among the warehouses and docks, mission 6 live.
+    // Marina district at dusk: Rico on foot among the warehouses and docks, mission 6 live.
     s.screen = SCREEN_PLAY; s.player.x = 2750; s.player.y = 1800;
+    s.clock = 18 * 60 + 45;
     s.player.money = 3200; s.player.score = 3200; s.player.wanted = 0;
     s.missionState.active = true; s.missionState.index = 5; s.missionState.step = 0;
     s.missionState.collectThisStep = 1;
@@ -371,6 +384,8 @@ function stageShot(name) {
     updateObjective();
   } else if (name === 'chase') {
     s.screen = SCREEN_PLAY;
+    // Night chase: headlights on, wanted 4, roadblock ahead.
+    s.clock = 22 * 60;
     const car = s.cars.find((c) => c.kind === 'player');
     s.player.inCar = car; car.driver = 'player'; car.occupied = true; car.speed = 300;
     car.x = 1600; car.y = 1200; car.angle = 0;
@@ -388,8 +403,9 @@ function stageShot(name) {
     s.roadblocks.push({ x: 1900, y: 1200, cars: [rb1, rb2] });
     updateObjective();
   } else if (name === 'mission') {
-    // Mission 6 "Harbor Lights": Rico at the marina, crates on the ground.
+    // Mission 6 "Harbor Lights" at dawn: Rico at the marina, crates on the ground.
     s.screen = SCREEN_PLAY;
+    s.clock = 6 * 60 + 30;
     s.player.x = 2700; s.player.y = 2000; s.player.money = 2600; s.player.score = 2600;
     s.missionState.active = true; s.missionState.index = 5; s.missionState.step = 0;
     s.missionState.collectThisStep = 0;
@@ -430,6 +446,10 @@ window.__game = {
   },
   get upgrades() { return s.player.upgrades; },
   get roadblocks() { return s.roadblocks; },
+  get heli() { return s.heli; },
+  get clock() { return s.clock; },
+  get darkness() { return darknessAt(s.clock); },
+  setClock: (mins) => { s.clock = mins; },
   newGame: () => { s = newGameState(); updateObjective(); },
 };
 updateObjective();
