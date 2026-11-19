@@ -32,6 +32,21 @@ export function generateCity(seed) {
     }
   }
   for (let i = 0; i < 6; i++) lots.push({ x: 260 + i * 480, y: 300 + (i % 2) * 800, w: 150, h: 70 });
+  // Street props: red hydrants on the sidewalk corners of the road junctions
+  // and benches in the parks and plazas, so the sidewalks read as lived-in
+  // instead of bare. Positions come from the same seeded RNG as the city.
+  const props = [];
+  for (const rx of roadsX) for (const ry of roadsY) {
+    if (rnd() < 0.45) props.push({ kind: 'hydrant', x: rx + 56, y: ry + 56 });
+  }
+  for (const pk of parks) {
+    props.push({ kind: 'bench', x: pk.x + pk.w / 2 - 14, y: pk.y + 22 });
+    props.push({ kind: 'bench', x: pk.x + 22, y: pk.y + pk.h / 2 - 4 });
+  }
+  props.push({ kind: 'bench', x: 1520, y: 1000 });
+  props.push({ kind: 'bench', x: 1660, y: 1180 });
+  props.push({ kind: 'bench', x: 520, y: 200 });
+  props.push({ kind: 'bench', x: 660, y: 300 });
   // Marina District (south-east corner): warehouses, docks jutting into the
   // beach shallows, moored boats. Generated blocks under a warehouse are cleared
   // so the district reads as its own place instead of overlapping buildings.
@@ -61,8 +76,30 @@ export function generateCity(seed) {
     buildings.push({ x: w.x, y: w.y, w: w.w, h: w.h, color: 4, height: 1, label: 'WAREHOUSE' });
   }
   const marina = { x: 2350, y: 1550, w: 800, h: 800, label: 'MARINA', docks: marinaDocks, boats: marinaBoats, warehouses: marinaWarehouses };
+  // Old Town district (north-west corner): a cobbled plaza, a church with a
+  // bell tower, brick lanes and narrow alleys. Generated blocks under the
+  // church and plaza are cleared, and the blocks that stay get the old-brick
+  // palette so the district reads as the city's oldest quarter.
+  const oldTownChurch = { x: 520, y: 460, w: 170, h: 130 };
+  const oldTownPlaza = { x: 480, y: 180, w: 220, h: 140 };
+  const oldTownLanes = [
+    { x: 470, y: 150, w: 26, h: 650 }, // north-south alley past the church
+    { x: 150, y: 600, w: 750, h: 26 }, // east-west lane into the plaza
+    { x: 760, y: 150, w: 26, h: 650 }, // north-south alley by the east row
+  ];
+  const overlapsOldTown = (b) => [oldTownChurch, oldTownPlaza].some((r) =>
+    b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y);
+  const keptOld = buildings.filter((b) => !overlapsOldTown(b));
+  buildings.length = 0;
+  for (const b of keptOld) {
+    const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    if (cx > 150 && cx < 900 && cy > 150 && cy < 800) b.color = 5; // old brick
+    buildings.push(b);
+  }
+  buildings.push({ x: oldTownChurch.x, y: oldTownChurch.y, w: oldTownChurch.w, h: oldTownChurch.h, color: 5, height: 2, label: 'CHURCH', church: true });
+  const oldTown = { x: 150, y: 150, w: 750, h: 650, label: 'OLD TOWN', church: oldTownChurch, plaza: oldTownPlaza, lanes: oldTownLanes };
   return {
-    seed, buildings, parks, lots, roadsX, roadsY, marina,
+    seed, buildings, parks, lots, roadsX, roadsY, marina, oldTown, props,
     beach: { y: WORLD.height - 260 },
     pier: { x: 1500, y: WORLD.height - 260, w: 90, h: 230 },
     plaza: { x: 1480, y: 980, w: 240, h: 240 },

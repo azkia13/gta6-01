@@ -10,8 +10,30 @@ export const GARAGE = { x: 700, y: 500, r: 110, nitroCharges: 3 };
 export const BIKE = { accelMul: 1.3, turnMul: 1.55, topBonus: 55 };
 // Police helicopter: sent up at 5 stars, circles at this radius and speed.
 export const HELI = { atWanted: 5, orbitR: 280, orbitSpeed: 0.4 };
+// Sprint stamina on foot: Shift runs Rico faster until the tank is empty,
+// then he is winded until it refills past the ready mark (see player.js).
+export const STAMINA = { max: 100, drain: 24, regen: 16, readyAt: 25 };
+// The van: a slow, boxy workhorse — slower off the line and a lower top
+// speed, but it shrugs off crashes and holds the wet road better than a car.
+export const VAN = { accelMul: 0.82, topPenalty: 70, rainGripKeep: 0.5, bounceMul: 0.5 };
+// Side jobs: taxi fares (pick the fare up, then drop them off) and the
+// vigilante job (wreck a marked thug car by ramming or shooting it).
+export const SIDEJOB = { taxiPickupTime: 90, taxiDropTime: 75, pickupR: 60, vigilanteTime: 120, rewardVigilante: 350 };
+export const VIGILANTE = { thugHp: 3, ramSpeed: 110, ramR: 56, ramCooldown: 0.9 };
 // Marina district bounds (south-east corner) — see world.js generateCity.
 export const MARINA = { x: 2350, y: 1550, w: 800, h: 800, label: 'MARINA' };
+// Old Town district bounds (north-west corner) — see world.js generateCity.
+export const OLD_TOWN = { x: 150, y: 150, w: 750, h: 650, label: 'OLD TOWN' };
+// Weather: grip and visibility the rain leaves the driver, per state, and
+// how much darker a storm makes the sky on top of the day/night cycle.
+export const WEATHER = {
+  grip: { clear: 1, drizzle: 0.92, rain: 0.78, storm: 0.62 },
+  visibility: { clear: 1, drizzle: 0.94, rain: 0.82, storm: 0.66 },
+  stormDark: 0.22, rainDark: 0.1,
+  // Rain Tires (garage upgrade) keep this share of the grip the rain
+  // would otherwise steal: a storm at 0.62 grip drives like 0.81 with them.
+  tiresKeep: 0.5,
+};
 // Police escalation: roadblocks from wanted 3, ramming from wanted 4, 4 cops at 5.
 export const POLICE = { roadblockAt: 3, ramAt: 4, maxCops: 4, maxCopsLow: 3 };
 export const SAVE_KEY = 'porto-verde.save.v1';
@@ -23,6 +45,8 @@ export const PALETTE = {
   pier: '#8a6a4a', park: '#4c8a3f', player: '#ffcf3f', police: '#2f6fd0',
   warehouse: '#8a7a5e', marinaWater: '#2e8f8a', boatHull: '#e8e4d8', boatCabin: '#c94f43',
   crate: '#a9713a', crateEdge: '#6d4a22', barricade: '#ff7a1a',
+  cobble: '#8f8578', cobble2: '#7d7468', church: '#d8cbb2', churchRoof: '#7a4a3a',
+  oldBrick: '#a86f4e', rainDrop: '#aec2e0',
   text: '#f4f1e6', muted: '#c9c4b2', panel: 'rgba(12,16,24,0.82)',
   hudGreen: '#7ee787', hudRed: '#ff6b5e', gold: '#ffd23f',
 };

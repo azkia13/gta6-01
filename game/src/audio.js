@@ -1,6 +1,7 @@
 // Synthesised sound only — WebAudio oscillators and noise, no audio files.
 export function createAudio() {
   let ctx = null, master = null, muted = false, engineOsc = null, engineGain = null, sirenOsc = null;
+  let rainSrc = null, rainGain = null;
   function ensure() {
     if (ctx) return true;
     try {
@@ -81,7 +82,38 @@ export function createAudio() {
       }
     },
     engineOff() { if (engineGain) engineGain.gain.value = 0; },
+    // Rain patter: a looped, low-passed noise bed whose volume follows the
+    // weather intensity (0 = dry). Starts lazily, stops when the sky clears.
+    rain(level) {
+      if (!ensure()) return;
+      if (level > 0 && !rainSrc) {
+        try {
+          const len = ctx.sampleRate * 2;
+          const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+          const d = buf.getChannelData(0);
+          let last = 0;
+          for (let i = 0; i < len; i++) {
+            const w = Math.random() * 2 - 1;
+            last = (last + 0.02 * w) / 1.02; // brownish noise, soft like rain
+            d[i] = last * 3;
+          }
+          rainSrc = ctx.createBufferSource(); rainSrc.buffer = buf; rainSrc.loop = true;
+          const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1400;
+          rainGain = ctx.createGain(); rainGain.gain.value = 0;
+          rainSrc.connect(f); f.connect(rainGain); rainGain.connect(master);
+          rainSrc.start();
+        } catch { rainSrc = null; rainGain = null; }
+      }
+      if (rainGain) rainGain.gain.value = muted ? 0 : level * 0.12;
+      if (level <= 0 && rainSrc) {
+        try { rainSrc.stop(); } catch { /* already stopped */ }
+        rainSrc = null; rainGain = null;
+      }
+    },
     winJingle() { [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => tone(f, 0.22, 'sine', 0.2), i * 130)); },
+    // Side-job payoff jingle: a quick rising triangle chirp, shorter and
+    // brighter than the mission win fanfare so a fare feels different.
+    sideJobJingle() { [784, 988, 1175, 1568].forEach((f, i) => setTimeout(() => tone(f, 0.11, 'triangle', 0.17), i * 80)); },
     loseJingle() { [392, 330, 262].forEach((f, i) => setTimeout(() => tone(f, 0.3, 'triangle', 0.18), i * 160)); },
   };
 }

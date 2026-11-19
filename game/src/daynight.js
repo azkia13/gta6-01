@@ -3,7 +3,7 @@
 // The clock runs 0.5 game-minutes per real second (see main.js), so a full day
 // takes about 48 real minutes — long enough to run a whole story arc in
 // daylight, short enough that night driving actually happens.
-import { clamp } from './config.js';
+import { WEATHER, clamp } from './config.js';
 
 // Darkness keyframes: [minutes after midnight, darkness 0..1].
 // Night 20:00-05:00, dawn 05:00-07:00, day 07:00-18:00, dusk 18:00-20:00.
@@ -23,6 +23,15 @@ export function darknessAt(clockMinutes) {
   return 0.9;
 }
 export function isNight(clockMinutes) { return darknessAt(clockMinutes) > 0.5; }
+// The same clock reads darker under storm clouds than under clear skies:
+// rain adds a little gloom, a storm a lot, on top of the day/night cycle.
+// Night is already near-black, so the storm's share shrinks as darkness
+// grows — the extra dark matters most at dusk and in the daytime.
+export function darknessWithWeather(clockMinutes, weather) {
+  const d = darknessAt(clockMinutes);
+  const storm = !weather ? 0 : weather.state === 'storm' ? WEATHER.stormDark : weather.state === 'rain' ? WEATHER.rainDark : 0;
+  return clamp(d + storm * (1 - d * 0.5), 0, 1);
+}
 export function phaseName(clockMinutes) {
   const m = ((clockMinutes % 1440) + 1440) % 1440;
   if (m < 300) return 'night';

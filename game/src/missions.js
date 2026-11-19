@@ -1,7 +1,7 @@
 // Story missions for Porto Verde + free-roam side jobs (taxi fares, package drops).
 // Rico Vega, a driver-for-hire, is pulled back into the fixer game by his old contact
-// Mama Luz. Seven story missions, then the finale pays out and the story completes.
-import { dist } from './config.js';
+// Mama Luz. Nine story missions, then the finale pays out and the story completes.
+import { dist, SIDEJOB } from './config.js';
 export const MISSIONS = [
   {
     id: 1, title: 'Welcome Back, Rico', reward: 400,
@@ -60,9 +60,38 @@ export const MISSIONS = [
   },
   {
     id: 7, title: 'King of the Verde', reward: 3000,
-    intro: 'Mama Luz: "The fixer is cornered at the north docks with his last guards. End it, lose the cops on the way to the hideout, then come home. The city will be yours, Rico."',
+    intro: 'Mama Luz: "The fixer is cornered at the north docks with his last guards. End it, lose the cops on the way to the hideout — but this is not the end. A storm is coming over Old Town, and the Don still holds his ledger."',
     steps: [
       { type: 'fight', label: 'Defeat the fixer and his guards (5)', x: 2600, y: 420, r: 150, count: 5 },
+      { type: 'escape', label: 'Escape to the hideout with the cops behind you', x: 2700, y: 500, r: 100, minWanted: 2 },
+      { type: 'goto', label: 'Meet Mama Luz at the plaza', x: 1600, y: 1100, r: 90 },
+    ],
+  },
+  {
+    id: 8, title: 'Storm Warning', reward: 3500,
+    intro: 'Mama Luz: "The storm is here, Rico, and the Don\'s boys are moving his stash through Old Town while the rain hides them. Get to the church, grab the three crates in the wet, and shake the cops at the hideout. The roads are slick — drive like it."',
+    steps: [
+      { type: 'goto', label: 'Reach the Old Town church in the storm', x: 605, y: 615, r: 70 },
+      {
+        type: 'collect', label: 'Collect the Don\'s crates in Old Town', count: 3,
+        crates: [
+          { x: 560, y: 250, r: 40 },
+          { x: 650, y: 270, r: 40 },
+          { x: 830, y: 520, r: 40 },
+        ],
+      },
+      { type: 'escape', label: 'Escape to the hideout with the cops behind you', x: 2700, y: 500, r: 100, minWanted: 2 },
+    ],
+  },
+  {
+    id: 9, title: "The Don's Ledger", reward: 5000,
+    intro: 'Mama Luz: "It all ends tonight, Rico. The Don is holding court in the Old Town plaza with his guards, and his ledger names every crooked deal in Porto Verde. Take him down, take the ledger, lose the cops — then come home. The city will be yours."',
+    steps: [
+      { type: 'fight', label: 'Defeat the Don and his guards in Old Town (5)', x: 590, y: 250, r: 150, count: 5 },
+      {
+        type: 'collect', label: "Grab the Don's ledger", count: 1,
+        crates: [{ x: 620, y: 290, r: 40 }],
+      },
       { type: 'escape', label: 'Escape to the hideout with the cops behind you', x: 2700, y: 500, r: 100, minWanted: 2 },
       { type: 'goto', label: 'Meet Mama Luz at the plaza — story complete', x: 1600, y: 1100, r: 90 },
     ],
@@ -131,11 +160,41 @@ function advance(ms, onComplete) {
   }
   return 'step';
 }
-export function startSideJob(ms, player, rnd) {
+// Nearest living pedestrian to a point — the taxi fare waits on the sidewalk.
+function nearestFarePed(peds, px, py, maxD) {
+  let best = null, bd = maxD;
+  for (const p of peds) {
+    if (!p.alive) continue;
+    const d = dist(px, py, p.x, p.y);
+    if (d < bd) { bd = d; best = p; }
+  }
+  return best;
+}
+export function startSideJob(ms, player, rnd, forcedKind, peds, spawnThugCar) {
   if (ms.sideJob) return null;
-  const kinds = ['taxi', 'package'];
-  const kind = kinds[Math.floor(rnd() * kinds.length)];
+  const kinds = ['taxi', 'package', 'vigilante'];
+  const kind = forcedKind || kinds[Math.floor(rnd() * kinds.length)];
   const px = player.x, py = player.y;
+  if (kind === 'taxi' && peds) {
+    // A fare is a real person on the street: Rico picks them up where they
+    // stand, then drops them at a marker across town against the clock.
+    const ped = nearestFarePed(peds, px, py, 1100);
+    if (ped) {
+      const reward = 180 + Math.floor(dist(px, py, ped.x, ped.y) / 8);
+      ms.sideJob = { kind, phase: 'pickup', ped, x: ped.x, y: ped.y, reward, label: 'Taxi fare — pick up ' + ped.name };
+      ms.sideTimer = SIDEJOB.taxiPickupTime;
+      return ms.sideJob;
+    }
+    // No fare nearby: fall through to a plain drop below.
+  }
+  if (kind === 'vigilante' && spawnThugCar) {
+    // A thug's car is marked on the map: wreck it by ramming it at speed or
+    // shooting it up, and the neighbourhood pays Rico for the favour.
+    const car = spawnThugCar();
+    ms.sideJob = { kind, car, x: car.x, y: car.y, reward: SIDEJOB.rewardVigilante, label: 'Vigilante — wreck the marked thug car' };
+    ms.sideTimer = SIDEJOB.vigilanteTime;
+    return ms.sideJob;
+  }
   const tx = 300 + rnd() * 2400, ty = 300 + rnd() * 1700;
   const reward = kind === 'taxi' ? 120 + Math.floor(dist(px, py, tx, ty) / 10) : 150;
   ms.sideJob = { kind, x: tx, y: ty, reward, label: kind === 'taxi' ? 'Taxi fare — drive the passenger here' : 'Package drop — deliver here' };
@@ -145,10 +204,30 @@ export function startSideJob(ms, player, rnd) {
 export function stepSideJob(ms, dt, player) {
   if (!ms.sideJob) return null;
   ms.sideTimer -= dt;
+  const job = ms.sideJob;
   const px = player.inCar ? player.inCar.x : player.x;
   const py = player.inCar ? player.inCar.y : player.y;
-  if (dist(px, py, ms.sideJob.x, ms.sideJob.y) < 80) {
-    const job = ms.sideJob; ms.sideJob = null;
+  if (job.kind === 'taxi' && job.phase === 'pickup') {
+    // The fare wanders while they wait, so the marker follows them.
+    job.x = job.ped.x; job.y = job.ped.y;
+    if (dist(px, py, job.ped.x, job.ped.y) < SIDEJOB.pickupR) {
+      job.ped.alive = false; // they climb in and leave the sidewalk
+      job.phase = 'drop';
+      job.x = 300 + Math.random() * 2400; job.y = 300 + Math.random() * 1700;
+      job.label = 'Taxi fare — drop ' + job.ped.name + ' at the marker';
+      ms.sideTimer = SIDEJOB.taxiDropTime;
+      return { pickedUp: job };
+    }
+  } else if (job.kind === 'vigilante') {
+    // The marker tracks the thug car while it drives away from Rico.
+    job.x = job.car.x; job.y = job.car.y;
+    if (job.car.hp <= 0) {
+      ms.sideJob = null;
+      player.money += job.reward; player.score += job.reward;
+      return { done: job };
+    }
+  } else if (dist(px, py, job.x, job.y) < 80) {
+    ms.sideJob = null;
     player.money += job.reward; player.score += job.reward;
     return { done: job };
   }

@@ -9,12 +9,21 @@ export function spawnEnemies(combat, x, y, count, kind) {
     // The fixer (mission 7 finale) is a real boss: triple health, faster trigger
     // finger, and he holds his ground longer than his guards.
     const isFixer = kind === 'fixer' && i === 0;
+    const ex = x + (Math.random() - 0.5) * 180, ey = y + (Math.random() - 0.5) * 180;
+    const flankSide = i % 2 === 0 ? 1 : -1;
     combat.enemies.push({
-      x: x + (Math.random() - 0.5) * 180, y: y + (Math.random() - 0.5) * 180,
+      x: ex, y: ey,
       hp: isFixer ? 150 : 50, speed: isFixer ? 70 : 95 + Math.random() * 40, angle: 0,
       // A 'fixer' squad is one boss plus guards; other squads keep their kind.
       kind: kind === 'fixer' ? (isFixer ? 'fixer' : 'thug') : (kind || 'thug'),
       shootCd: isFixer ? 0.6 + Math.random() : 1 + Math.random() * 2, alive: true, flash: 0,
+      // Flank side for the Don's guards (see stepCombat): each guard picks
+      // a side of Rico to circle toward, so the squad cross-fires him.
+      flank: flankSide, flankDist: 150 + Math.random() * 60,
+      // Fixed flank bearing, set at spawn from where the guard stands
+      // relative to the fight: the guard holds a point off Rico's shoulder
+      // on this bearing instead of chasing a point that swings as it moves.
+      flankAngle: Math.atan2(ey - y, ex - x) + flankSide * Math.PI / 2,
     });
   }
   return combat.enemies;
@@ -41,7 +50,7 @@ export function punch(combat, px, py, angle, peds, enemies, player, audio) {
   }
   return hits;
 }
-export function stepCombat(combat, dt, city, player, peds, onEnemyDown, onPlayerHit) {
+export function stepCombat(combat, dt, city, player, peds, onEnemyDown, onPlayerHit, cars) {
   if (combat.cooldown > 0) combat.cooldown -= dt;
   if (combat.punchCd > 0) combat.punchCd -= dt;
   if (combat.muzzle > 0) combat.muzzle -= dt;
@@ -64,6 +73,16 @@ export function stepCombat(combat, dt, city, player, peds, onEnemyDown, onPlayer
           break;
         }
       }
+      // Bullets can also wreck a marked thug car (vigilante side job): three
+      // solid hits and it is done, no ramming required.
+      if (b.life > 0 && cars) {
+        for (const c of cars) {
+          if (c.thug && c.hp > 0 && dist(b.x, b.y, c.x, c.y) < 26) {
+            c.hp -= 1; b.life = 0;
+            break;
+          }
+        }
+      }
     } else if (dist(b.x, b.y, player.x, player.y) < 16 && !player.inCar) {
       b.life = 0;
       if (onPlayerHit) onPlayerHit(8);
@@ -77,7 +96,17 @@ export function stepCombat(combat, dt, city, player, peds, onEnemyDown, onPlayer
     const d = dist(e.x, e.y, player.x, player.y);
     const a = angleTo(e.x, e.y, player.x, player.y);
     e.angle = a;
-    if (d > 60) { e.x += Math.cos(a) * e.speed * dt; e.y += Math.sin(a) * e.speed * dt; }
+    if (e.kind === 'guard') {
+      // The Don's guards flank instead of charging straight in: each one
+      // circles toward a point off Rico's shoulder on its own fixed bearing
+      // (set at spawn), so the squad shoots at him from two angles at once.
+      // Standing still while they close in gets Rico cross-fired — but they
+      // hold their distance instead of swarming him.
+      const fx = player.x + Math.cos(e.flankAngle) * e.flankDist;
+      const fy = player.y + Math.sin(e.flankAngle) * e.flankDist;
+      const fa = angleTo(e.x, e.y, fx, fy);
+      if (dist(e.x, e.y, fx, fy) > 40) { e.x += Math.cos(fa) * e.speed * dt; e.y += Math.sin(fa) * e.speed * dt; }
+    } else if (d > 60) { e.x += Math.cos(a) * e.speed * dt; e.y += Math.sin(a) * e.speed * dt; }
     e.shootCd -= dt;
     if (e.shootCd <= 0 && d < 420 && !player.inCar) {
       e.shootCd = 1.6 + Math.random();

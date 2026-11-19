@@ -1,13 +1,14 @@
 // Rico Vega on foot: movement, entering/exiting cars, health, wanted heat.
 // Garage upgrades live on the player (see garage.js) and survive in the save.
-import { PLAYER, WORLD, clamp, dist } from './config.js';
+import { PLAYER, WORLD, STAMINA, clamp, dist } from './config.js';
 import { collideBuildings, clampToWorld } from './world.js';
 import { createUpgrades, armorFactor } from './garage.js';
 export function createPlayer(x, y) {
   return {
     x, y, angle: -Math.PI / 2, speed: 0, health: PLAYER.maxHealth,
     money: 250, wanted: 0, wantedTimer: 0, inCar: null, invuln: 0,
-    score: 0, kills: 0, crimes: 0, onFoot: true,
+    score: 0, kills: 0, crimes: 0, onFoot: true, headlightsOn: false,
+    stamina: STAMINA.max, exhausted: false,
     upgrades: createUpgrades(),
   };
 }
@@ -20,7 +21,18 @@ export function stepPlayer(p, dt, input, city, cars, audio) {
   if (p.inCar) return; // driving is handled by vehicles.js
   const ax = input.axis();
   const len = Math.hypot(ax.x, ax.y) || 1;
-  const sp = (input.run() ? PLAYER.runSpeed : PLAYER.walkSpeed);
+  // Sprinting on foot (Shift) burns stamina; walk it off to refill it. Run
+  // dry and Rico is winded until the tank climbs back past the ready mark.
+  let sprinting = false;
+  if (input.run() && (ax.x || ax.y) && !p.exhausted && p.stamina > 0) {
+    sprinting = true;
+    p.stamina = Math.max(0, p.stamina - STAMINA.drain * dt);
+    if (p.stamina <= 0) p.exhausted = true;
+  } else {
+    p.stamina = Math.min(STAMINA.max, p.stamina + STAMINA.regen * dt);
+    if (p.exhausted && p.stamina >= STAMINA.readyAt) p.exhausted = false;
+  }
+  const sp = sprinting ? PLAYER.runSpeed : PLAYER.walkSpeed;
   let nx = p.x, ny = p.y;
   if (ax.x || ax.y) {
     nx = p.x + (ax.x / len) * sp * dt;

@@ -1,10 +1,11 @@
 // Driving physics. `upgrades` (garage.js) is optional: engine tiers raise top speed
 // and a nitro kit lets the driver hold Shift for a boost while charges remain.
-import { CAR, WORLD, BIKE, clamp, dist, mulberry32 } from './config.js';
+import { CAR, WORLD, BIKE, VAN, clamp, dist, mulberry32 } from './config.js';
 import { collideBuildings, isRoad } from './world.js';
 import { carTopSpeed, hasNitro, useNitro } from './garage.js';
 const CAR_COLORS = ['#e5534b', '#4fc3f7', '#f2c94c', '#e8e8e8', '#7ee787', '#ff9f43', '#c77dff', '#95a5a6'];
 const BIKE_COLORS = ['#e5534b', '#ffd23f', '#4fc3f7', '#ff9f43', '#c77dff'];
+const VAN_COLORS = ['#8a7a5e', '#5e7a8a', '#a86f4e', '#7a8a5e'];
 const MODELS = ['Sedan', 'Coupe', 'Van', 'Taxi', 'Pickup', 'Sport'];
 export function makeCar(x, y, angle, kind, color) {
   return {
@@ -14,13 +15,24 @@ export function makeCar(x, y, angle, kind, color) {
     targetAngle: angle, cruise: 90 + Math.random() * 70, honk: 0, stuck: 0, nitroT: 0,
   };
 }
-// Motorcycles: same shape as a car object (so entering, driving and stealing
-// all work unchanged) but flagged bike, so physics and rendering treat them
-// as the nimble two-wheelers they are.
+// The van: a boxy workhorse with the same shape as a car object (so
+// entering, driving and stealing all work unchanged) but flagged van, so
+// physics treats it as the slow, tough, wet-weather hauler it is.
+export function makeVan(x, y, angle, kind) {
+  return {
+    x, y, angle, speed: 0, kind: kind || 'parked', color: VAN_COLORS[Math.floor(Math.random() * VAN_COLORS.length)],
+    model: 'Van', w: 54, h: 28, bike: false, van: true,
+    stolen: false, occupied: false, driver: null, police: false,
+    targetAngle: angle, cruise: 70 + Math.random() * 30, honk: 0, stuck: 0, nitroT: 0,
+  };
+}
+// Motorcycles ride on the same car object as everything else (entering,
+// driving and stealing work unchanged) but carry the bike flag, so physics
+// and rendering treat them as the nimble two-wheelers they are.
 export function makeBike(x, y, angle) {
   return {
-    x, y, angle, speed: 0, kind: 'parked', color: BIKE_COLORS[Math.floor(Math.random() * BIKE_COLORS.length)],
-    model: 'Bike', w: 34, h: 14, bike: true,
+    x, y, angle, speed: 0, bike: true, model: 'Bike', w: 34, h: 14,
+    kind: 'parked', color: BIKE_COLORS[Math.floor(Math.random() * BIKE_COLORS.length)],
     stolen: false, occupied: false, driver: null, police: false,
     targetAngle: angle, cruise: 0, honk: 0, stuck: 0, nitroT: 0,
   };
@@ -31,7 +43,9 @@ export function spawnTraffic(city, count, rnd) {
     const rx = city.roadsX[Math.floor(rnd() * city.roadsX.length)];
     const ry = city.roadsY[Math.floor(rnd() * city.roadsY.length)];
     const horizontal = rnd() < 0.5;
-    const c = makeCar(horizontal ? rx + (rnd() - 0.5) * 600 : rx + (rnd() < 0.5 ? -22 : 22),
+    // Every fifth car on the road is a van, trundling along slower than the rest.
+    const mk = i % 5 === 4 ? makeVan : makeCar;
+    const c = mk(horizontal ? rx + (rnd() - 0.5) * 600 : rx + (rnd() < 0.5 ? -22 : 22),
       horizontal ? ry + (rnd() < 0.5 ? -22 : 22) : ry + (rnd() - 0.5) * 600,
       horizontal ? (rnd() < 0.5 ? 0 : Math.PI) : (rnd() < 0.5 ? Math.PI / 2 : -Math.PI / 2), 'traffic');
     c.cruise = 80 + rnd() * 80;
@@ -42,6 +56,8 @@ export function spawnTraffic(city, count, rnd) {
     cars.push(makeCar(lot.x + 30, lot.y + 20, 0, 'parked'));
     cars.push(makeCar(lot.x + 90, lot.y + 20, 0, 'parked'));
   }
+  // A parked van by the first lot — steal it for the tough, wet-weather ride.
+  cars.push(makeVan(city.lots[0].x + 60, city.lots[0].y + 45, 0, 'parked'));
   cars.push(makeCar(1600, 800, 0, 'player', '#ffcf3f')); // Rico's own car, parked on the road by the plaza
   // Parked motorcycles at roadside spots around the city — faster than any
   // car off the line, and stealing one is a crime like any other.
@@ -57,6 +73,8 @@ function turnToward(car, target, dt, rate) {
 }
 export function stepTraffic(car, dt, city) {
   if (car.driver === 'player' || car.kind === 'parked') return;
+  // A wrecked thug car (vigilante side job) stays where it died.
+  if (car.thug && car.hp <= 0) return;
   // Follow the road: snap to nearest road axis, keep cruising, turn at junctions.
   const onH = Math.abs(car.y - nearestRoadY(city, car.y)) < WORLD.roadWidth / 2;
   const onV = Math.abs(car.x - nearestRoadX(city, car.x)) < WORLD.roadWidth / 2;
@@ -105,14 +123,19 @@ export function stepPolice(car, dt, city, player) {
   else { car.angle += Math.PI / 3; car.speed *= 0.5; }
   return d;
 }
-export function stepDriving(car, dt, input, city, audio, upgrades) {
+export function stepDriving(car, dt, input, city, audio, upgrades, grip) {
   const ax = input.axis();
   const fwd = ax.y < 0, back = ax.y > 0;
+  // Rain steals grip: the tyres accelerate slower and the steering answers
+  // late. `grip` is 1 on dry roads (see weather.js gripFactor). A van's wide
+  // tyres hold the wet road better, so it keeps half the grip the rain
+  // would otherwise steal — and it is slower and tougher all round.
+  const gripMul = grip == null ? 1 : (car.van ? 1 - (1 - grip) * (1 - VAN.rainGripKeep) : grip);
   // Bikes launch harder, turn sharper and run a higher top speed than cars;
   // garage engine upgrades apply to them exactly like they do to cars.
-  const accel = CAR.accel * (car.bike ? BIKE.accelMul : 1);
-  const turnRate = CAR.turn * (car.bike ? BIKE.turnMul : 1);
-  const topSpeed = (upgrades ? carTopSpeed(upgrades) : CAR.maxSpeed) + (car.bike ? BIKE.topBonus : 0);
+  const accel = CAR.accel * (car.bike ? BIKE.accelMul : 1) * (car.van ? VAN.accelMul : 1) * gripMul;
+  const turnRate = CAR.turn * (car.bike ? BIKE.turnMul : 1) * gripMul;
+  const topSpeed = (upgrades ? carTopSpeed(upgrades) : CAR.maxSpeed) + (car.bike ? BIKE.topBonus : 0) - (car.van ? VAN.topPenalty : 0);
   // Nitro: hold Shift while moving forward; each boost burns one charge.
   let boosting = false;
   if (upgrades && fwd && input.run() && car.speed > 40) {
@@ -130,7 +153,11 @@ export function stepDriving(car, dt, input, city, audio, upgrades) {
   const nx = car.x + Math.cos(car.angle) * car.speed * dt;
   const ny = car.y + Math.sin(car.angle) * car.speed * dt;
   if (!collideBuildings(city, nx, ny, 20)) { car.x = nx; car.y = ny; }
-  else { if (Math.abs(car.speed) > 150 && audio) audio.crash(); car.speed *= -0.25; }
+  else {
+    if (Math.abs(car.speed) > 150 && audio) audio.crash();
+    // A van's weight soaks up a crash: it bounces off walls half as hard.
+    car.speed *= car.van ? -0.25 * VAN.bounceMul : -0.25;
+  }
   car.x = clamp(car.x, 30, WORLD.width - 30);
   car.y = clamp(car.y, 30, WORLD.height - 30);
   if (audio) audio.engine(clamp(Math.abs(car.speed) / CAR.maxSpeed, 0, 1));

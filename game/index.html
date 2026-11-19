@@ -9,10 +9,14 @@
   html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f16; }
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
   #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  /* Live weather chip over the HUD: mirrors the sky (clear / drizzle / rain /
+     storm) so the slick-roads warning reads even before the first raindrop. */
+  #weather-chip { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); padding: 6px 14px; border-radius: 6px; background: rgba(12,16,24,0.82); color: #ffd23f; font: bold 13px system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: 1px; pointer-events: none; white-space: nowrap; }
 </style>
 </head>
 <body>
-<canvas id="game" aria-label="Porto Verde: an open-world crime game. Explore the city on foot, by car or by motorcycle, run 7 story missions, visit the Marina district, upgrade your car at the garage with G, outrun police roadblocks and the helicopter at 5 stars, and drive through a full day/night cycle with headlights after dark."></canvas>
+<canvas id="game" aria-label="Porto Verde: an open-world crime game. Explore the city on foot, by car, van or motorcycle, run 9 story missions, visit the Marina and Old Town districts, upgrade your car at the garage with G, toggle headlights with H, outrun police roadblocks and the helicopter at 5 stars, and drive through rain and storms in a full day/night cycle."></canvas>
+<div id="weather-chip" data-state="clear" role="status" aria-label="Current weather">CLEAR SKIES</div>
 <p id="status" role="status" aria-live="polite"></p>
 <script type="module" src="./src/main.js"></script>
 </body>

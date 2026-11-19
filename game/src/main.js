@@ -1,7 +1,7 @@
 // Porto Verde — boot, loop, screens, wanted/police, missions, save/load, shot staging.
 // ?seed=N fixes the city. ?shot=chase|menu|street|mission stages that scene and sets
 // window.__shotReady. window.__game exposes live state for playtesting.
-import { WORLD, SAVE_KEY, BEST_KEY, POLICE, HELI, mulberry32, clamp, dist } from './config.js';
+import { WORLD, SAVE_KEY, BEST_KEY, POLICE, HELI, VIGILANTE, mulberry32, clamp, dist } from './config.js';
 import { generateCity } from './world.js';
 import { createPlayer, stepPlayer, tryEnterCar, exitCar, addWanted, damagePlayer } from './player.js';
 import { spawnTraffic, stepTraffic, stepPolice, stepDriving, makeCar, carHitsPed } from './vehicles.js';
@@ -9,11 +9,12 @@ import { spawnPedestrians, stepPedestrians, nearestPed } from './pedestrians.js'
 import { MISSIONS, createMissionState, currentMission, currentStep, startMission, missionObjectiveText, stepObjective, startSideJob, stepSideJob } from './missions.js';
 import { createCombat, spawnEnemies, shoot, punch, stepCombat } from './combat.js';
 import { createAudio } from './audio.js';
-import { createInput, ACTION_START, ACTION_PAUSE, ACTION_ENTER, ACTION_MUTE, ACTION_GARAGE, ACTION_PUNCH, ACTION_CONTINUE } from './input.js';
+import { createInput, ACTION_START, ACTION_PAUSE, ACTION_ENTER, ACTION_MUTE, ACTION_GARAGE, ACTION_PUNCH, ACTION_CONTINUE, ACTION_LIGHTS } from './input.js';
 import { createRenderer, SCREEN_MENU, SCREEN_PLAY, SCREEN_PAUSED, SCREEN_BUSTED, SCREEN_WASTED, SCREEN_WIN } from './render.js';
 import { UPGRADES, isNearGarage, buyUpgrade, refillNitro } from './garage.js';
 import { createHeli, spawnHeli, stepHeli } from './heli.js';
 import { darknessAt } from './daynight.js';
+import { createWeather, stepWeather, gripFactor, setWeather, isRaining, weatherLabel } from './weather.js';
 
 const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
@@ -37,6 +38,7 @@ function newGameState() {
     missionState: createMissionState(),
     pickups: [{ x: 1700, y: 1000, kind: 'health' }, { x: 900, y: 600, kind: 'cash' }, { x: 2400, y: 1500, kind: 'cash' }],
     police: [], roadblocks: [], heli: null, time: 0, clock: 8 * 60 + 15, toast: '', toastT: 0,
+    weather: createWeather(),
     screen: SCREEN_MENU, best: readBest(), missionTarget: null, objectiveText: '',
     sideJobTimer: 12, enemiesSpawnedFor: -1, cratesSpawnedFor: -1,
     garageOpen: false, garageSel: 0, garageMsg: '', garageItems: UPGRADES, nearGarage: false,
@@ -116,8 +118,13 @@ function maybeSpawnEnemies() {
   const key = ms.index * 10 + ms.step;
   if (s.enemiesSpawnedFor === key) return;
   s.enemiesSpawnedFor = key;
-  const kind = ms.index === 6 ? 'fixer' : 'thug';
-  spawnEnemies(s.combat, st.x, st.y, st.count || 2, kind);
+  const kind = ms.index === 8 ? 'don' : ms.index === 6 ? 'fixer' : 'thug';
+  const spawned = spawnEnemies(s.combat, st.x, st.y, st.count || 2, kind);
+  if (ms.index === 8 && spawned.length > 0) {
+    // The Don is the boss: far tougher than his guards, who close in around him.
+    spawned[0].kind = 'don'; spawned[0].hp = 220; spawned[0].speed = 80;
+    for (let i = 1; i < spawned.length; i++) { spawned[i].kind = 'guard'; spawned[i].hp = 60; }
+  }
   ms.killsThisStep = 0;
   toast('Hostiles at the marker — deal with them!');
 }
@@ -209,12 +216,61 @@ function ensureCrates() {
   s.cratesSpawnedFor = key;
   for (const c of st.crates || []) s.pickups.push({ x: c.x, y: c.y, kind: 'crate' });
 }
+function spawnThugCar() {
+  // The vigilante job's mark: a dark-red thug car that takes off down the
+  // road, tough enough to need three solid hits before it is wrecked.
+  const p = s.player;
+  const a = Math.random() * Math.PI * 2;
+  const car = makeCar(
+    clamp(p.x + Math.cos(a) * 550, 120, WORLD.width - 120),
+    clamp(p.y + Math.sin(a) * 550, 120, WORLD.height - 120),
+    a, 'traffic', '#7a1f1f');
+  car.thug = true; car.hp = VIGILANTE.thugHp; car.cruise = 150;
+  s.cars.push(car);
+  return car;
+}
+function vigilanteRamTick() {
+  // Ramming the marked thug car at speed wrecks it a hit at a time — with a
+  // short cooldown so one long scrape cannot count as three hits.
+  const job = s.missionState.sideJob;
+  if (!job || job.kind !== 'vigilante' || !job.car || job.car.hp <= 0) return;
+  const p = s.player;
+  if (!p.inCar) return;
+  const car = p.inCar;
+  if (Math.abs(car.speed) < VIGILANTE.ramSpeed) return;
+  if (dist(car.x, car.y, job.car.x, job.car.y) > VIGILANTE.ramR) return;
+  if (s.time - (job.lastRam || -9) < VIGILANTE.ramCooldown) return;
+  job.lastRam = s.time;
+  job.car.hp -= 1;
+  const a = Math.atan2(job.car.y - car.y, job.car.x - car.x);
+  job.car.x += Math.cos(a) * 46; job.car.y += Math.sin(a) * 46;
+  car.speed *= -0.3;
+  audio.crash();
+  toast(job.car.hp > 0 ? 'Thug car hit — ' + job.car.hp + ' more to wreck it!' : 'Thug car wrecked!');
+}
+function syncWeatherChip() {
+  // The DOM weather chip over the HUD (see game/index.html) mirrors the sky.
+  const chip = document.getElementById('weather-chip');
+  if (!chip) return;
+  if (chip.dataset.state !== s.weather.state) {
+    chip.dataset.state = s.weather.state;
+    chip.textContent = weatherLabel(s.weather);
+  }
+}
 function stepGame(dt) {
   s.time += dt; s.clock += dt * 0.5;
   if (s.toastT > 0) s.toastT -= dt;
+  // The weather rolls on with the clock; rain patter follows its intensity.
+  stepWeather(s.weather, dt, s.clock);
+  syncWeatherChip();
+  audio.rain(s.weather.intensity);
   const p = s.player;
   const actions = input.takeActions();
   if (actions & ACTION_MUTE) { const m = audio.toggleMute(); toast(m ? 'Sound muted (M to unmute)' : 'Sound on'); }
+  if (actions & ACTION_LIGHTS) {
+    p.headlightsOn = !p.headlightsOn;
+    toast(p.headlightsOn ? 'Headlights on (H to switch off)' : 'Headlights off');
+  }
   if (actions & ACTION_PAUSE) {
     if (s.garageOpen) { s.garageOpen = false; return; }
     s.screen = SCREEN_PAUSED; announce('Paused.'); return;
@@ -227,7 +283,7 @@ function stepGame(dt) {
     else if (s.nearGarage) { s.garageOpen = true; s.garageSel = 0; s.garageMsg = ''; refillNitro(p.upgrades); audio.blip(); }
   }
   if (s.garageOpen) {
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < UPGRADES.length; i++) {
       if (input.keys.has('Digit' + (i + 1))) {
         s.garageSel = i;
         const r = buyUpgrade(p.upgrades, p, UPGRADES[i].id);
@@ -238,9 +294,10 @@ function stepGame(dt) {
     }
     return;
   }
-  // Driving or walking.
+  // Driving or walking. Rain steals grip from every car on the road — less
+  // so with Rain Tires fitted (see weather.js gripFactor).
   if (p.inCar) {
-    stepDriving(p.inCar, dt, input, s.city, audio, p.upgrades);
+    stepDriving(p.inCar, dt, input, s.city, audio, p.upgrades, gripFactor(s.weather, p.upgrades));
     p.x = p.inCar.x; p.y = p.inCar.y; p.angle = p.inCar.angle;
     if (actions & ACTION_ENTER) { exitCar(p, s.city); audio.engineOff(); }
   } else {
@@ -249,7 +306,7 @@ function stepGame(dt) {
     if (actions & ACTION_ENTER) {
       if (tryEnterCar(p, s.cars, audio)) { toast(p.inCar.stolen ? 'Car stolen! The cops noticed.' : 'In the car — drive!'); audio.blip(); }
     }
-    if (input.takeClick()) shoot(s.combat, p.x, p.y, p.aimAngle || p.angle, audio);
+    if (input.takeClick()) shoot(s.combat, p.x, p.y, (p.aimAngle ?? p.angle), audio);
     if (actions & ACTION_PUNCH) {
       const hits = punch(s.combat, p.x, p.y, p.angle, s.peds, s.combat.enemies, p, audio);
       if (hits > 0) { addWanted(p, 1); toast('You started a fight!'); }
@@ -261,10 +318,11 @@ function stepGame(dt) {
   input.mouse.wy = (input.mouse.y / scale) + camY();
   // Traffic, peds, police.
   for (const car of s.cars) if (car.kind === 'traffic') stepTraffic(car, dt, s.city);
-  stepPedestrians(s.peds, dt, s.city, p, p.wanted > 0);
+  stepPedestrians(s.peds, dt, s.city, p, p.wanted > 0, isRaining(s.weather));
+  vigilanteRamTick();
   wantedTick(dt);
   policeTick(dt);
-  if (s.heli) stepHeli(s.heli, dt, p);
+  if (s.heli) stepHeli(s.heli, dt, p, isRaining(s.weather));
   audio.siren(p.wanted >= 2);
   // Car hits pedestrian = crime.
   if (p.inCar && Math.abs(p.inCar.speed) > 60) {
@@ -312,19 +370,23 @@ function stepGame(dt) {
   // Side jobs.
   s.sideJobTimer -= dt;
   if (s.sideJobTimer <= 0 && !s.missionState.sideJob) {
-    startSideJob(s.missionState, p, Math.random);
+    startSideJob(s.missionState, p, Math.random, null, s.peds, () => spawnThugCar());
     if (s.missionState.sideJob) toast('SIDE JOB: ' + s.missionState.sideJob.label + ' — ' + '$' + s.missionState.sideJob.reward);
     s.sideJobTimer = 25;
   }
   const sj = stepSideJob(s.missionState, dt, p);
-  if (sj && sj.done) { toast('Side job done +' + '$' + sj.done.reward); audio.pickup(); }
+  if (sj && sj.pickedUp) { toast('Passenger aboard — drop them at the marker!'); audio.sideJobJingle(); }
+  if (sj && sj.done) { toast('Side job done +' + '$' + sj.done.reward); audio.sideJobJingle(); audio.pickup(); }
   if (sj && sj.expired) toast('Side job expired.');
   // Combat.
   stepCombat(s.combat, dt, s.city, p, s.peds, (e) => {
+    // Only real enemies count toward a fight step: a pedestrian caught by a
+    // stray bullet is a crime, not a mission kill.
+    if (!e.kind) return;
     s.missionState.killsThisStep = (s.missionState.killsThisStep || 0) + 1;
     p.kills += 1; p.score += 50;
-    if (e.kind === 'thug' || e.kind === 'fixer') addWanted(p, 1);
-  }, (dmg) => { if (damagePlayer(p, dmg)) wasted(); });
+    if (e.kind === 'thug' || e.kind === 'fixer' || e.kind === 'don' || e.kind === 'guard') addWanted(p, 1);
+  }, (dmg) => { if (damagePlayer(p, dmg)) wasted(); }, s.cars);
   updateObjective();
   if (p.health <= 0) wasted();
   if (Math.floor(s.time * 2) % 120 === 0) saveGame();
@@ -373,24 +435,27 @@ function stageShot(name) {
   const rnd = mulberry32(seed);
   if (name === 'menu') { s.screen = SCREEN_MENU; updateObjective(); }
   else if (name === 'street') {
-    // Marina district at dusk: Rico on foot among the warehouses and docks, mission 6 live.
-    s.screen = SCREEN_PLAY; s.player.x = 2750; s.player.y = 1800;
-    s.clock = 18 * 60 + 45;
+    // Old Town in the rain: Rico on foot in the cobbled plaza, mission 8 live.
+    s.screen = SCREEN_PLAY; s.player.x = 590; s.player.y = 250;
+    s.clock = 16 * 60 + 30;
+    setWeather(s.weather, 'rain');
     s.player.money = 3200; s.player.score = 3200; s.player.wanted = 0;
-    s.missionState.active = true; s.missionState.index = 5; s.missionState.step = 0;
+    s.missionState.active = true; s.missionState.index = 7; s.missionState.step = 1;
     s.missionState.collectThisStep = 1;
     for (const c of currentStep(s.missionState).crates) s.pickups.push({ x: c.x, y: c.y, kind: 'crate' });
-    s.cratesSpawnedFor = 50;
+    s.cratesSpawnedFor = 71;
     updateObjective();
   } else if (name === 'chase') {
     s.screen = SCREEN_PLAY;
-    // Night chase: headlights on, wanted 4, roadblock ahead.
+    // Night storm chase: headlights on, wanted 4, roadblock ahead, rain falling.
     s.clock = 22 * 60;
+    setWeather(s.weather, 'storm');
     const car = s.cars.find((c) => c.kind === 'player');
     s.player.inCar = car; car.driver = 'player'; car.occupied = true; car.speed = 300;
     car.x = 1600; car.y = 1200; car.angle = 0;
     s.player.x = car.x; s.player.y = car.y;
     s.player.wanted = 4; s.player.money = 4200; s.player.score = 4200;
+    s.player.headlightsOn = true; // the chase runs on headlights in the storm
     s.missionState.active = true; s.missionState.index = 3; s.missionState.step = 1;
     for (let i = 0; i < 2; i++) {
       const pc = makeCar(1380 - i * 120, 1200 + (i % 2 ? 40 : -40), 0, 'police', '#2f6fd0');
@@ -403,17 +468,17 @@ function stageShot(name) {
     s.roadblocks.push({ x: 1900, y: 1200, cars: [rb1, rb2] });
     updateObjective();
   } else if (name === 'mission') {
-    // Mission 6 "Harbor Lights" at dawn: Rico at the marina, crates on the ground.
+    // Mission 8 "Storm Warning" in Old Town: Rico at the church, rain falling.
     s.screen = SCREEN_PLAY;
-    s.clock = 6 * 60 + 30;
-    s.player.x = 2700; s.player.y = 2000; s.player.money = 2600; s.player.score = 2600;
-    s.missionState.active = true; s.missionState.index = 5; s.missionState.step = 0;
+    s.clock = 15 * 60;
+    setWeather(s.weather, 'rain');
+    s.player.x = 605; s.player.y = 615; s.player.money = 2600; s.player.score = 2600;
+    s.missionState.active = true; s.missionState.index = 7; s.missionState.step = 0;
     s.missionState.collectThisStep = 0;
-    for (const c of currentStep(s.missionState).crates) s.pickups.push({ x: c.x, y: c.y, kind: 'crate' });
-    s.cratesSpawnedFor = 50;
     updateObjective();
   }
   updateObjective();
+  syncWeatherChip();
   let painted = 0;
   const paint = () => {
     renderer.draw(s, s.screen, s.best);
@@ -449,6 +514,11 @@ window.__game = {
   get heli() { return s.heli; },
   get clock() { return s.clock; },
   get darkness() { return darknessAt(s.clock); },
+  get weather() { return s.weather; },
+  setWeather: (state) => setWeather(s.weather, state),
+  // Start a side job on demand (playtesting): 'taxi' | 'package' | 'vigilante'.
+  startSideJob: (kind) => startSideJob(s.missionState, s.player, Math.random, kind || null, s.peds, () => spawnThugCar()),
+  get headlights() { return s.player.headlightsOn; },
   setClock: (mins) => { s.clock = mins; },
   newGame: () => { s = newGameState(); updateObjective(); },
 };

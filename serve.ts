@@ -14,6 +14,10 @@ const portIndex = args.indexOf('--port');
 const requested = portIndex === -1 ? 8080 : Number(args[portIndex + 1]);
 const port = Number.isInteger(requested) && requested > 0 && requested < 65536 ? requested : 8080;
 
+// Requests served so far — printed on shutdown so a playtest run can say
+// exactly how many files the game pulled from this server (expect ~16).
+let requests = 0;
+
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -39,6 +43,7 @@ const MIME: Record<string, string> = {
 };
 
 createServer((request, response) => {
+  requests += 1;
   const url = new URL(request.url ?? '/', 'http://localhost');
   let pathname: string;
   try {
@@ -70,4 +75,8 @@ createServer((request, response) => {
   createReadStream(file).pipe(response);
 }).listen(port, '127.0.0.1', () => {
   console.log(`game/ is on http://localhost:${port}`);
+});
+process.on('SIGINT', () => {
+  console.log(`game/ server on port ${port} stopped after ${requests} request(s)`);
+  process.exit(0);
 });
