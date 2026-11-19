@@ -1,7 +1,9 @@
 // Story missions for Porto Verde + free-roam side jobs (taxi fares, package drops).
 // Rico Vega, a driver-for-hire, is pulled back into the fixer game by his old contact
-// Mama Luz. Nine story missions, then the finale pays out and the story completes.
+// Mama Luz. Eleven story missions: nine against the fixer and the Don, then Rico
+// buys his own fronts and defends his empire — then the story completes.
 import { dist, SIDEJOB } from './config.js';
+import { empireOwnedCount, empireAttacksActive } from './empire.js';
 export const MISSIONS = [
   {
     id: 1, title: 'Welcome Back, Rico', reward: 400,
@@ -85,7 +87,7 @@ export const MISSIONS = [
   },
   {
     id: 9, title: "The Don's Ledger", reward: 5000,
-    intro: 'Mama Luz: "It all ends tonight, Rico. The Don is holding court in the Old Town plaza with his guards, and his ledger names every crooked deal in Porto Verde. Take him down, take the ledger, lose the cops — then come home. The city will be yours."',
+    intro: 'Mama Luz: "The Don is holding court in the Old Town plaza with his guards, and his ledger names every crooked deal in Porto Verde. Take him down, take the ledger, lose the cops — then come home. The Don\'s empire will be up for grabs, Rico, and I know a man who should grab it."',
     steps: [
       { type: 'fight', label: 'Defeat the Don and his guards in Old Town (5)', x: 590, y: 250, r: 150, count: 5 },
       {
@@ -93,6 +95,24 @@ export const MISSIONS = [
         crates: [{ x: 620, y: 290, r: 40 }],
       },
       { type: 'escape', label: 'Escape to the hideout with the cops behind you', x: 2700, y: 500, r: 100, minWanted: 2 },
+      { type: 'goto', label: 'Meet Mama Luz at the plaza', x: 1600, y: 1100, r: 90 },
+    ],
+  },
+  {
+    id: 10, title: 'First Business', reward: 4000,
+    intro: 'Mama Luz: "The Don\'s fronts are sitting empty, Rico — laundromat, chop shop, nightclub. Buy one with your own cash and it pays you every minute. Press B to open the empire panel, pick a front with 1, 2 or 3, then collect your first payout at its door."',
+    steps: [
+      { type: 'buy', label: 'Buy your first business (press B, then 1-3)', need: 1 },
+      { type: 'payout', label: 'Collect your first payout (B, then the front\'s number)', amount: 1 },
+      { type: 'goto', label: 'Tell Mama Luz about the business', x: 1600, y: 1100, r: 90 },
+    ],
+  },
+  {
+    id: 11, title: 'Empire Strikes Back', reward: 6000,
+    intro: 'Mama Luz: "Rico — the rival crew is hitting every front you own, all at once! Defend them, then the boss himself is squatting at the laundromat with his last boys. Finish him, and Porto Verde is yours for good."',
+    steps: [
+      { type: 'defend', label: 'Defend all your businesses from the rival raid (3)', count: 3 },
+      { type: 'fight', label: 'Defeat the rival boss at the laundromat (1)', x: 1000, y: 300, r: 150, count: 1 },
       { type: 'goto', label: 'Meet Mama Luz at the plaza — story complete', x: 1600, y: 1100, r: 90 },
     ],
   },
@@ -147,6 +167,20 @@ export function stepObjective(ms, player, onComplete) {
   if (s.type === 'collect') {
     // Crates are picked up by walking/driving over them (main.js counts them).
     if ((ms.collectThisStep || 0) >= (s.count || 1)) return advance(ms, onComplete);
+  }
+  if (s.type === 'buy') {
+    // Mission 10: Rico becomes an owner — any front counts.
+    if (ms.empire && empireOwnedCount(ms.empire) >= (s.need || 1)) return advance(ms, onComplete);
+  }
+  if (s.type === 'payout') {
+    // Mission 10: the first payout actually collected (empire tracks the total).
+    if (ms.empire && ms.empire.totalCollected >= (s.amount || 1)) return advance(ms, onComplete);
+  }
+  if (s.type === 'defend') {
+    // Mission 11: the raid crew is beaten AND no front is still under attack.
+    if ((ms.killsThisStep || 0) >= (s.count || 1) && ms.empire && empireAttacksActive(ms.empire) === 0) {
+      return advance(ms, onComplete);
+    }
   }
   return null;
 }

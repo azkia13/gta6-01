@@ -1,7 +1,7 @@
 // Porto Verde — boot, loop, screens, wanted/police, missions, save/load, shot staging.
 // ?seed=N fixes the city. ?shot=chase|menu|street|mission stages that scene and sets
 // window.__shotReady. window.__game exposes live state for playtesting.
-import { WORLD, SAVE_KEY, BEST_KEY, POLICE, HELI, VIGILANTE, mulberry32, clamp, dist } from './config.js';
+import { WORLD, SAVE_KEY, BEST_KEY, POLICE, HELI, VIGILANTE, EMPIRE, mulberry32, clamp, dist } from './config.js';
 import { generateCity } from './world.js';
 import { createPlayer, stepPlayer, tryEnterCar, exitCar, addWanted, damagePlayer } from './player.js';
 import { spawnTraffic, stepTraffic, stepPolice, stepDriving, makeCar, carHitsPed } from './vehicles.js';
@@ -9,12 +9,13 @@ import { spawnPedestrians, stepPedestrians, nearestPed } from './pedestrians.js'
 import { MISSIONS, createMissionState, currentMission, currentStep, startMission, missionObjectiveText, stepObjective, startSideJob, stepSideJob } from './missions.js';
 import { createCombat, spawnEnemies, shoot, punch, stepCombat } from './combat.js';
 import { createAudio } from './audio.js';
-import { createInput, ACTION_START, ACTION_PAUSE, ACTION_ENTER, ACTION_MUTE, ACTION_GARAGE, ACTION_PUNCH, ACTION_CONTINUE, ACTION_LIGHTS } from './input.js';
+import { createInput, ACTION_START, ACTION_PAUSE, ACTION_ENTER, ACTION_MUTE, ACTION_GARAGE, ACTION_PUNCH, ACTION_CONTINUE, ACTION_LIGHTS, ACTION_BUSINESS } from './input.js';
 import { createRenderer, SCREEN_MENU, SCREEN_PLAY, SCREEN_PAUSED, SCREEN_BUSTED, SCREEN_WASTED, SCREEN_WIN } from './render.js';
 import { UPGRADES, isNearGarage, buyUpgrade, refillNitro } from './garage.js';
 import { createHeli, spawnHeli, stepHeli } from './heli.js';
 import { darknessAt } from './daynight.js';
 import { createWeather, stepWeather, gripFactor, setWeather, isRaining, weatherLabel } from './weather.js';
+import { createEmpire, empireIncomeTick, empireAttackTick, empireAttackAll, empireRaidBeaten, empireClearRaid, empireSummary, empireSave, empireLoad, buyBusiness, upgradeBusiness, collectBusiness, nearestBusiness, businessDef } from './empire.js';
 
 const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
@@ -32,16 +33,19 @@ function newGameState() {
   const player = createPlayer(1600, 1100);
   const cars = spawnTraffic(city, 16, rnd);
   const peds = spawnPedestrians(city, 34, rnd);
+  const empire = createEmpire();
+  const missionState = createMissionState();
+  missionState.empire = empire; // mission steps read the empire (buy/payout/defend)
   return {
-    city, player, cars, peds,
+    city, player, cars, peds, empire, missionState,
     combat: createCombat(),
-    missionState: createMissionState(),
     pickups: [{ x: 1700, y: 1000, kind: 'health' }, { x: 900, y: 600, kind: 'cash' }, { x: 2400, y: 1500, kind: 'cash' }],
     police: [], roadblocks: [], heli: null, time: 0, clock: 8 * 60 + 15, toast: '', toastT: 0,
     weather: createWeather(),
     screen: SCREEN_MENU, best: readBest(), missionTarget: null, objectiveText: '',
     sideJobTimer: 12, enemiesSpawnedFor: -1, cratesSpawnedFor: -1,
     garageOpen: false, garageSel: 0, garageMsg: '', garageItems: UPGRADES, nearGarage: false,
+    empireOpen: false, empireSel: 0, empireMsg: '', nearBusiness: null,
     won: false, bustedCount: 0,
   };
 }
@@ -53,7 +57,7 @@ function saveGame() {
     window.localStorage.setItem(SAVE_KEY, JSON.stringify({
       money: s.player.money, score: s.player.score, mission: s.missionState.index,
       done: s.missionState.done, x: s.player.x, y: s.player.y, health: s.player.health,
-      upgrades: s.player.upgrades,
+      upgrades: s.player.upgrades, empire: empireSave(s.empire),
     }));
   } catch { /* storage off */ }
 }
@@ -82,6 +86,23 @@ function updateObjective() {
   }
   s.missionTarget = (s.missionState.active && st && (st.type === 'goto' || st.type === 'escape' || st.type === 'fight'))
     ? { x: st.x, y: st.y } : (s.missionState.sideJob ? { x: s.missionState.sideJob.x, y: s.missionState.sideJob.y } : null);
+  if (s.missionState.active && st && (st.type === 'buy' || st.type === 'payout' || st.type === 'defend')) {
+    // Empire steps point at a front: the cheapest unowned one to buy, the
+    // richest owned one to collect from, the first raided one to defend.
+    const emp = s.missionState.empire;
+    if (emp) {
+      let best = null, bd = 1e9;
+      for (const def of EMPIRE.defs) {
+        const owned = !!emp.owned[def.id];
+        if (st.type === 'buy' && owned) continue;
+        if (st.type === 'payout' && !owned) continue;
+        if (st.type === 'defend' && !emp.raid) continue;
+        const d = dist(s.player.x, s.player.y, def.x, def.y);
+        if (d < bd) { bd = d; best = def; }
+      }
+      if (best) s.missionTarget = { x: best.x, y: best.y };
+    }
+  }
 }
 function startPlaying(fromSave) {
   if (fromSave) {
@@ -94,6 +115,7 @@ function startPlaying(fromSave) {
         Object.assign(s.player.upgrades, sv.upgrades);
         if (!Array.isArray(s.player.upgrades.owned)) s.player.upgrades.owned = [];
       }
+      if (sv.empire) empireLoad(s.empire, sv.empire); // fronts, levels, pending pots
       toast('Save loaded — welcome back, Rico.');
     }
   }
@@ -118,8 +140,13 @@ function maybeSpawnEnemies() {
   const key = ms.index * 10 + ms.step;
   if (s.enemiesSpawnedFor === key) return;
   s.enemiesSpawnedFor = key;
-  const kind = ms.index === 8 ? 'don' : ms.index === 6 ? 'fixer' : 'thug';
+  const kind = ms.index === 10 ? 'boss' : ms.index === 8 ? 'don' : ms.index === 6 ? 'fixer' : 'thug';
   const spawned = spawnEnemies(s.combat, st.x, st.y, st.count || 2, kind);
+  if (ms.index === 10 && spawned.length > 0) {
+    // The rival boss: the toughest fight in the game, flanked by his boys.
+    spawned[0].kind = 'boss'; spawned[0].hp = 260; spawned[0].speed = 85;
+    for (let i = 1; i < spawned.length; i++) { spawned[i].kind = 'thug'; spawned[i].hp = 50; }
+  }
   if (ms.index === 8 && spawned.length > 0) {
     // The Don is the boss: far tougher than his guards, who close in around him.
     spawned[0].kind = 'don'; spawned[0].hp = 220; spawned[0].speed = 80;
@@ -127,6 +154,64 @@ function maybeSpawnEnemies() {
   }
   ms.killsThisStep = 0;
   toast('Hostiles at the marker — deal with them!');
+}
+// ---- Empire raids ----
+// A raid crew spawns at the raided front and hunts Rico (combat.js moves
+// them); the front earns nothing until every raider is down. Never spawn a
+// raid on top of a story fight — the timer waits for a quiet moment.
+function startEmpireRaid(def) {
+  if (!def || !s.empire.raid) return;
+  const crew = spawnEnemies(s.combat, def.x, def.y, EMPIRE.attackCrew, 'thug');
+  s.empire.raid.enemies = crew;
+  toast('RIVAL RAID on ' + def.name + ' — defend your front!');
+  audio.crash();
+}
+function startEmpireRaidAll() {
+  // Mission 11: the rival crew hits every front Rico owns at once. The crew
+  // masses at the first front; every front stops earning until they are down.
+  const defs = empireAttackAll(s.empire);
+  if (!defs || defs.length === 0) return;
+  const crew = spawnEnemies(s.combat, defs[0].x, defs[0].y, EMPIRE.attackCrew, 'thug');
+  s.empire.raid.enemies = crew;
+  toast('RIVAL CREW IS HITTING ALL YOUR FRONTS — DEFEND THEM!');
+  audio.crash();
+}
+function checkRaidBeaten() {
+  const emp = s.empire;
+  if (!emp.raid || !empireRaidBeaten(emp)) return;
+  const wasAll = emp.raidAll;
+  const def = emp.raid.defId ? businessDef(emp.raid.defId) : null;
+  empireClearRaid(emp);
+  s.player.money += EMPIRE.defendBonus;
+  s.player.score += EMPIRE.defendBonus;
+  toast(wasAll ? 'All fronts defended! +' + '$' + EMPIRE.defendBonus + ' bonus.' : (def ? def.name : 'Front') + ' defended! +' + '$' + EMPIRE.defendBonus + ' bonus.');
+  audio.cashRegister();
+  saveGame();
+}
+// Empire panel (B): 1/2/3 runs the front's primary action — buy it if it is
+// for sale, collect its pending pot if there is one, otherwise upgrade it.
+function empirePrimary(i) {
+  const def = EMPIRE.defs[i];
+  if (!def) return;
+  s.empireSel = i;
+  let r;
+  if (!s.empire.owned[def.id]) r = buyBusiness(s.empire, s.player, def.id);
+  else if (Math.floor(s.empire.owned[def.id].pending) >= 1) r = collectBusiness(s.empire, s.player, def.id);
+  else r = upgradeBusiness(s.empire, s.player, def.id);
+  s.empireMsg = r.reason;
+  if (r.ok) { audio.cashRegister(); saveGame(); }
+  else audio.blip();
+}
+function syncEmpireChip() {
+  // The DOM empire chip under the weather chip mirrors the fronts (see
+  // game/index.html): income per minute, fronts owned, pending payout.
+  const chip = document.getElementById('empire-chip');
+  if (!chip) return;
+  const label = empireSummary(s.empire);
+  if (chip.dataset.state !== label) {
+    chip.dataset.state = label;
+    chip.textContent = label;
+  }
 }
 function spawnRoadblock() {
   // Two police cars parked across the road ahead of the player, plus a barricade.
@@ -263,6 +348,7 @@ function stepGame(dt) {
   // The weather rolls on with the clock; rain patter follows its intensity.
   stepWeather(s.weather, dt, s.clock);
   syncWeatherChip();
+  syncEmpireChip();
   audio.rain(s.weather.intensity);
   const p = s.player;
   const actions = input.takeActions();
@@ -289,6 +375,22 @@ function stepGame(dt) {
         const r = buyUpgrade(p.upgrades, p, UPGRADES[i].id);
         s.garageMsg = r.reason;
         if (r.ok) { audio.pickup(); saveGame(); }
+        input.keys.delete('Digit' + (i + 1));
+      }
+    }
+    return;
+  }
+  // Empire panel: B opens it anywhere; near a front it preselects that front.
+  // The world freezes while Rico counts his money, like the garage shop.
+  s.nearBusiness = !p.inCar ? nearestBusiness(s.empire, p.x, p.y, EMPIRE.nearR) : null;
+  if (actions & ACTION_BUSINESS) {
+    if (s.empireOpen) { s.empireOpen = false; }
+    else { s.empireOpen = true; s.empireSel = 0; s.empireMsg = ''; if (s.nearBusiness) s.empireSel = EMPIRE.defs.indexOf(s.nearBusiness); audio.blip(); }
+  }
+  if (s.empireOpen) {
+    for (let i = 0; i < EMPIRE.defs.length; i++) {
+      if (input.keys.has('Digit' + (i + 1))) {
+        empirePrimary(i);
         input.keys.delete('Digit' + (i + 1));
       }
     }
@@ -349,6 +451,16 @@ function stepGame(dt) {
     }
   }
   // Missions.
+  // Empire: fronts drip income into their pending pots; rival crews raid
+  // owned fronts on a timer — never during a story fight or mission 11.
+  empireIncomeTick(s.empire, dt);
+  const msNow = s.missionState, stNow = currentStep(msNow);
+  const quiet = !(msNow.active && msNow.index === 10) && !(stNow && stNow.type === 'fight');
+  const raided = empireAttackTick(s.empire, dt, quiet);
+  if (raided) startEmpireRaid(raided);
+  // Mission 11 opens with the coordinated raid on every front Rico owns.
+  if (msNow.active && msNow.index === 10 && msNow.step === 0 && !s.empire.raidStarted) startEmpireRaidAll();
+  checkRaidBeaten();
   maybeSpawnEnemies();
   if (actions & ACTION_START) {
     const m = currentMission(s.missionState);
@@ -385,7 +497,7 @@ function stepGame(dt) {
     if (!e.kind) return;
     s.missionState.killsThisStep = (s.missionState.killsThisStep || 0) + 1;
     p.kills += 1; p.score += 50;
-    if (e.kind === 'thug' || e.kind === 'fixer' || e.kind === 'don' || e.kind === 'guard') addWanted(p, 1);
+    if (e.kind === 'thug' || e.kind === 'fixer' || e.kind === 'don' || e.kind === 'guard' || e.kind === 'boss') addWanted(p, 1);
   }, (dmg) => { if (damagePlayer(p, dmg)) wasted(); }, s.cars);
   updateObjective();
   if (p.health <= 0) wasted();
@@ -435,15 +547,15 @@ function stageShot(name) {
   const rnd = mulberry32(seed);
   if (name === 'menu') { s.screen = SCREEN_MENU; updateObjective(); }
   else if (name === 'street') {
-    // Old Town in the rain: Rico on foot in the cobbled plaza, mission 8 live.
-    s.screen = SCREEN_PLAY; s.player.x = 590; s.player.y = 250;
-    s.clock = 16 * 60 + 30;
-    setWeather(s.weather, 'rain');
-    s.player.money = 3200; s.player.score = 3200; s.player.wanted = 0;
-    s.missionState.active = true; s.missionState.index = 7; s.missionState.step = 1;
-    s.missionState.collectThisStep = 1;
-    for (const c of currentStep(s.missionState).crates) s.pickups.push({ x: c.x, y: c.y, kind: 'crate' });
-    s.cratesSpawnedFor = 71;
+    // Club Neon at night: Rico on foot outside his nightclub, mission 10 live,
+    // the empire chip showing income and a pending payout on the HUD.
+    s.screen = SCREEN_PLAY; s.player.x = 1500; s.player.y = 1400;
+    s.clock = 21 * 60 + 30;
+    setWeather(s.weather, 'clear');
+    s.player.money = 6200; s.player.score = 6200; s.player.wanted = 0;
+    s.empire.owned.nightclub = { level: 2, pending: 120 };
+    s.missionState.active = true; s.missionState.index = 9; s.missionState.step = 0;
+    s.missionState.collectThisStep = 0;
     updateObjective();
   } else if (name === 'chase') {
     s.screen = SCREEN_PLAY;
@@ -468,17 +580,20 @@ function stageShot(name) {
     s.roadblocks.push({ x: 1900, y: 1200, cars: [rb1, rb2] });
     updateObjective();
   } else if (name === 'mission') {
-    // Mission 8 "Storm Warning" in Old Town: Rico at the church, rain falling.
+    // Mission 10 "First Business" at the laundromat: Rico collecting his
+    // first payout, the front's marker and the empire line on the HUD.
     s.screen = SCREEN_PLAY;
-    s.clock = 15 * 60;
-    setWeather(s.weather, 'rain');
-    s.player.x = 605; s.player.y = 615; s.player.money = 2600; s.player.score = 2600;
-    s.missionState.active = true; s.missionState.index = 7; s.missionState.step = 0;
+    s.clock = 10 * 60;
+    setWeather(s.weather, 'clear');
+    s.player.x = 1000; s.player.y = 380; s.player.money = 2400; s.player.score = 2400;
+    s.empire.owned.laundromat = { level: 1, pending: 85 };
+    s.missionState.active = true; s.missionState.index = 9; s.missionState.step = 1;
     s.missionState.collectThisStep = 0;
     updateObjective();
   }
   updateObjective();
   syncWeatherChip();
+  syncEmpireChip();
   let painted = 0;
   const paint = () => {
     renderer.draw(s, s.screen, s.best);
@@ -520,6 +635,35 @@ window.__game = {
   startSideJob: (kind) => startSideJob(s.missionState, s.player, Math.random, kind || null, s.peds, () => spawnThugCar()),
   get headlights() { return s.player.headlightsOn; },
   setClock: (mins) => { s.clock = mins; },
+  // Empire hooks (playtesting): buy / upgrade / collect a front, force a raid.
+  get empire() { return s.empire; },
+  get empireOpen() { return s.empireOpen; },
+  openEmpire: () => { s.empireOpen = true; s.empireSel = 0; s.empireMsg = ''; return true; },
+  closeEmpire: () => { s.empireOpen = false; },
+  buyBusiness: (id) => {
+    const r = buyBusiness(s.empire, s.player, id);
+    if (r.ok) { audio.cashRegister(); saveGame(); }
+    return r;
+  },
+  upgradeBusiness: (id) => {
+    const r = upgradeBusiness(s.empire, s.player, id);
+    if (r.ok) { audio.cashRegister(); saveGame(); }
+    return r;
+  },
+  collectBusiness: (id) => {
+    const r = collectBusiness(s.empire, s.player, id);
+    if (r.ok) { audio.cashRegister(); saveGame(); }
+    return r;
+  },
+  triggerAttack: () => {
+    const ids = Object.keys(s.empire.owned);
+    if (ids.length === 0 || s.empire.raid) return null;
+    const def = businessDef(ids[0]);
+    s.empire.raid = { defId: def.id, enemies: [] };
+    startEmpireRaid(def);
+    return def;
+  },
+  attackAll: () => { startEmpireRaidAll(); return s.empire.raid; },
   newGame: () => { s = newGameState(); updateObjective(); },
 };
 updateObjective();

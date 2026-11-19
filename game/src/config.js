@@ -34,6 +34,22 @@ export const WEATHER = {
   // would otherwise steal: a storm at 0.62 grip drives like 0.81 with them.
   tiresKeep: 0.5,
 };
+// Empire businesses: three fronts Rico can buy with cash. Each one earns its
+// income into a pending pot (see empire.js) that Rico collects at the door;
+// upgrades raise the income, and rival crews raid owned fronts on a timer.
+export const EMPIRE = {
+  attackFirstDelay: 75, attackGapMin: 90, attackGapMax: 150, attackCrew: 3,
+  defendBonus: 150, nearR: 130,
+  defs: [
+    { id: 'laundromat', name: 'Spin Cycle Laundromat', short: 'LAUNDROMAT', price: 1500, income: 45, x: 1000, y: 300, color: '#7ec8e8' },
+    { id: 'chopshop', name: "Rico's Chop Shop", short: 'CHOP SHOP', price: 3500, income: 110, x: 2100, y: 900, color: '#e8a04c' },
+    { id: 'nightclub', name: 'Club Neon', short: 'NIGHTCLUB', price: 5000, income: 180, x: 1500, y: 1500, color: '#c86ae8' },
+  ],
+  // Income multiplier per level (index = level - 1) and what reaching that
+  // level costs, as a share of the front's price.
+  levelMul: [1, 1.6, 2.2],
+  levelCostMul: [0, 0.6, 1.0],
+};
 // Police escalation: roadblocks from wanted 3, ramming from wanted 4, 4 cops at 5.
 export const POLICE = { roadblockAt: 3, ramAt: 4, maxCops: 4, maxCopsLow: 3 };
 export const SAVE_KEY = 'porto-verde.save.v1';

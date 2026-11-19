@@ -2,7 +2,7 @@
 // G opens the garage shop when Rico is standing by the garage (700,500).
 // Space (punch) and C (continue) latch as one-shot actions so a quick tap is
 // never lost between frames — held-key sampling alone can miss a short press.
-export const ACTION_START = 1, ACTION_PAUSE = 2, ACTION_ENTER = 4, ACTION_MUTE = 8, ACTION_GARAGE = 16, ACTION_PUNCH = 32, ACTION_CONTINUE = 64, ACTION_LIGHTS = 128;
+export const ACTION_START = 1, ACTION_PAUSE = 2, ACTION_ENTER = 4, ACTION_MUTE = 8, ACTION_GARAGE = 16, ACTION_PUNCH = 32, ACTION_CONTINUE = 64, ACTION_LIGHTS = 128, ACTION_BUSINESS = 256;
 export function createInput(canvas) {
   const keys = new Set();
   let queued = 0;
@@ -18,6 +18,7 @@ export function createInput(canvas) {
     if (e.code === 'KeyM') queued |= ACTION_MUTE;
     if (e.code === 'KeyG') queued |= ACTION_GARAGE;
     if (e.code === 'KeyH') queued |= ACTION_LIGHTS; // H toggles the headlights
+    if (e.code === 'KeyB') queued |= ACTION_BUSINESS; // B opens the empire panel
   };
   const up = (e) => keys.delete(e.code);
   const move = (e) => {

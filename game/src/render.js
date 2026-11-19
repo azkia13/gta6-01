@@ -1,7 +1,8 @@
 // Drawing only: camera, city, cars, people, HUD with minimap, menus, markers.
-import { WORLD, PALETTE, FONT, fmtMoney, fmtClock } from './config.js';
+import { WORLD, PALETTE, FONT, fmtMoney, fmtClock, EMPIRE } from './config.js';
 import { darknessAt, darknessWithWeather, skyOverlay, headlightBeam, lampPositions, phaseName } from './daynight.js';
 import { drawRain, stormDarkness, weatherLabel, isRaining } from './weather.js';
+import { empireIncomePerMin, empirePendingTotal, empireTotalIncomePerMin, empireUnderAttack, empireOwnedCount } from './empire.js';
 export const SCREEN_MENU = 'menu', SCREEN_PLAY = 'play', SCREEN_PAUSED = 'paused';
 export const SCREEN_BUSTED = 'busted', SCREEN_WASTED = 'wasted', SCREEN_WIN = 'win';
 const BUILDING_COLORS = ['#c98a5e', '#7fa3c9', '#e0c06a', '#9b7ec2', '#8a7a5e', '#a86f4e'];
@@ -255,7 +256,7 @@ export function createRenderer(canvas) {
       ctx.fillStyle = '#ffd23f'; ctx.fillRect(e.x - 12, e.y - 24, 24, 4);
       ctx.fillStyle = '#e5534b'; ctx.fillRect(e.x - 12, e.y - 24, 24 * Math.max(0, e.hp / 50), 4);
       ctx.font = 'bold 10px ' + FONT; ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
-      ctx.fillText(e.kind === 'fixer' ? 'FIXER' : e.kind === 'don' ? 'DON' : e.kind === 'guard' ? 'GUARD' : 'THUG', e.x, e.y - 30);
+      ctx.fillText(e.kind === 'fixer' ? 'FIXER' : e.kind === 'don' ? 'DON' : e.kind === 'boss' ? 'BOSS' : e.kind === 'guard' ? 'GUARD' : 'THUG', e.x, e.y - 30);
     }
     for (const b of s.combat.bullets) {
       ctx.fillStyle = '#ffe66d'; ctx.beginPath(); ctx.arc(b.x, b.y, 3.5, 0, Math.PI * 2); ctx.fill();
@@ -276,6 +277,46 @@ export function createRenderer(canvas) {
       ctx.beginPath(); ctx.arc(pk.x, pk.y, 12, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#20242c'; ctx.font = 'bold 12px ' + FONT; ctx.textAlign = 'center';
       ctx.fillText(pk.kind === 'health' ? '+' : '$', pk.x, pk.y - 4);
+    }
+    // Empire fronts: a shopfront for each business — its own colour, a sign
+    // with its name and price, a gold frame once Rico owns it, level pips,
+    // and a flashing red ring plus warning while a rival crew raids it.
+    if (s.empire) {
+      for (const def of EMPIRE.defs) {
+        const owned = !!s.empire.owned[def.id];
+        const attacked = empireUnderAttack(s.empire, def.id);
+        const pulse = attacked ? 1 + Math.sin(s.time * 8) * 0.2 : 1;
+        ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(def.x - 44, def.y - 28, 88, 60);
+        ctx.fillStyle = def.color; ctx.fillRect(def.x - 48, def.y - 32, 96, 64);
+        ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fillRect(def.x - 48, def.y - 32, 96, 10);
+        ctx.fillStyle = '#20242c'; ctx.fillRect(def.x - 48, def.y - 6, 96, 6);
+        ctx.fillStyle = '#20242c'; ctx.font = 'bold 13px ' + FONT; ctx.textAlign = 'center';
+        ctx.fillText(def.short, def.x, def.y - 40);
+        if (owned) {
+          const own = s.empire.owned[def.id];
+          ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 3;
+          ctx.strokeRect(def.x - 48, def.y - 32, 96, 64);
+          ctx.fillStyle = '#ffd23f';
+          for (let i = 0; i < own.level; i++) { ctx.beginPath(); ctx.arc(def.x - 14 + i * 14, def.y + 22, 4, 0, Math.PI * 2); ctx.fill(); }
+          ctx.font = 'bold 11px ' + FONT;
+          ctx.fillText('$' + empireIncomePerMin(s.empire, def.id) + '/min', def.x, def.y + 40);
+          if (Math.floor(own.pending) > 0) {
+            ctx.fillStyle = '#7ee787';
+            ctx.fillText('PENDING $' + Math.floor(own.pending), def.x, def.y + 54);
+          }
+        } else {
+          ctx.fillStyle = '#f4f1e6'; ctx.font = 'bold 12px ' + FONT;
+          ctx.fillText('FOR SALE ' + fmtMoney(def.price), def.x, def.y + 46);
+          ctx.fillStyle = '#c9c4b2'; ctx.font = '11px ' + FONT;
+          ctx.fillText('B — buy', def.x, def.y + 60);
+        }
+        if (attacked) {
+          ctx.strokeStyle = 'rgba(255,80,60,' + pulse.toFixed(2) + ')'; ctx.lineWidth = 5;
+          ctx.beginPath(); ctx.arc(def.x, def.y, 62 * pulse, 0, Math.PI * 2); ctx.stroke();
+          ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 13px ' + FONT;
+          ctx.fillText('UNDER ATTACK!', def.x, def.y - 58);
+        }
+      }
     }
     // Police roadblocks: striped barricade strung between the two cop cars.
     for (const rb of s.roadblocks || []) {
@@ -372,6 +413,17 @@ export function createRenderer(canvas) {
       ctx.fillStyle = '#e8b06a'; ctx.font = 'bold 9px ' + FONT; ctx.textAlign = 'center';
       ctx.fillText('OT', mx + (o.x + o.w / 2) * sx, my + (o.y + o.h / 2) * sy - 4);
     }
+    // Empire fronts on the minimap: gold for owned, red while raided, grey
+    // outline while still for sale — Rico's holdings at a glance.
+    if (s.empire) {
+      for (const def of EMPIRE.defs) {
+        const owned = !!s.empire.owned[def.id];
+        const attacked = empireUnderAttack(s.empire, def.id);
+        ctx.fillStyle = attacked ? '#ff6b5e' : owned ? '#ffd23f' : 'rgba(244,241,230,0.7)';
+        ctx.beginPath(); ctx.arc(mx + def.x * sx, my + def.y * sy, attacked ? 5 : 4, 0, Math.PI * 2); ctx.fill();
+        if (!owned) { ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(mx + def.x * sx, my + def.y * sy, 5, 0, Math.PI * 2); ctx.stroke(); }
+      }
+    }
     const t = s.missionTarget;
     if (t) { ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.arc(mx + t.x * sx, my + t.y * sy, 5, 0, Math.PI * 2); ctx.fill(); }
     for (const car of s.cars) if (car.police) { ctx.fillStyle = '#4f8ef7'; ctx.fillRect(mx + car.x * sx - 2, my + car.y * sy - 2, 4, 4); }
@@ -387,9 +439,15 @@ export function createRenderer(canvas) {
   }
   function drawHud(s) {
     const p = s.player;
-    ctx.fillStyle = 'rgba(10,14,20,0.82)'; ctx.fillRect(12, 12, 300, 126);
+    ctx.fillStyle = 'rgba(10,14,20,0.82)'; ctx.fillRect(12, 12, 300, 150);
     text('RICO VEGA', 22, 20, 17, '#ffcf3f', 'left', true);
     text(fmtMoney(p.money) + '   SCORE ' + p.score, 22, 44, 16, '#f4f1e6');
+    // Empire line: income per minute, fronts owned, uncollected payout —
+    // red while a rival crew is raiding one of Rico's fronts.
+    if (s.empire) {
+      const under = empireOwnedCount(s.empire) > 0 && s.empire.raid;
+      text('EMPIRE $' + empireTotalIncomePerMin(s.empire) + '/min · ' + empireOwnedCount(s.empire) + ' fronts · PENDING $' + empirePendingTotal(s.empire), 22, 128, 13, under ? '#ff6b5e' : '#7ee787', 'left', true);
+    }
     // Health bar.
     ctx.fillStyle = '#333'; ctx.fillRect(22, 68, 180, 12);
     ctx.fillStyle = p.health > 40 ? '#7ee787' : '#ff6b5e';
@@ -420,9 +478,10 @@ export function createRenderer(canvas) {
     // Speed + controls hint.
     const speed = p.inCar ? Math.round(Math.abs(p.inCar.speed) * 0.55) : 0;
     if (p.inCar) text(speed + ' km/h', view.w - 220, view.h - 60, 26, '#f4f1e6', 'right', true);
-    text(p.inCar ? 'WASD drive · E exit · Shift nitro · H headlights · M mute · P pause' : 'WASD walk · Shift sprint · E steal car · Click shoot · Space punch · ENTER mission', view.w - 16, view.h - 28, 13, '#c9c4b2', 'right');
+    text(p.inCar ? 'WASD drive · E exit · Shift nitro · H headlights · B empire · M mute · P pause' : 'WASD walk · Shift sprint · E steal car · Click shoot · Space punch · B empire · ENTER mission', view.w - 16, view.h - 28, 13, '#c9c4b2', 'right');
     // Garage prompt + nitro charges.
     if (s.nearGarage && !p.inCar) text('GARAGE — press G to open upgrades', view.w - 16, view.h - 96, 15, '#7ee787', 'right', true);
+    if (s.nearBusiness && !p.inCar) text('EMPIRE — press B to manage ' + s.nearBusiness.name, view.w - 16, view.h - 120, 15, '#ffd23f', 'right', true);
     if (p.upgrades && p.upgrades.nitro) text('NITRO ×' + (p.upgrades.nitroCharges || 0) + ' (Shift to boost)', view.w - 220, view.h - 88, 14, '#ff9f43', 'right', true);
     // Toast message.
     if (s.toast && s.toastT > 0) {
@@ -433,7 +492,7 @@ export function createRenderer(canvas) {
     // Side job chip.
     if (s.missionState.sideJob) {
       const j = s.missionState.sideJob;
-      text('SIDE JOB: ' + j.label + ' — ' + fmtMoney(j.reward) + ' (' + Math.ceil(s.missionState.sideTimer) + 's)', 22, 146, 14, '#7ee787', 'left', true);
+      text('SIDE JOB: ' + j.label + ' — ' + fmtMoney(j.reward) + ' (' + Math.ceil(s.missionState.sideTimer) + 's)', 22, 170, 14, '#7ee787', 'left', true);
     }
   }
   function drawGarage(s) {
@@ -458,6 +517,32 @@ export function createRenderer(canvas) {
     });
     text(s.garageMsg || 'Press 1-6 to buy, arrows to choose, G or Esc to leave', view.w / 2, y + h - 58, 16, '#ffd23f', 'center');
     text('Engine and armor apply to every car you drive.', view.w / 2, y + h - 30, 13, '#c9c4b2', 'center');
+  }
+  function drawEmpire(s) {
+    // Canvas-drawn business panel: every front with its price, income, level,
+    // pending pot and raid state. 1/2/3 runs the front's primary action.
+    const emp = s.empire;
+    ctx.fillStyle = 'rgba(6,10,18,0.72)'; ctx.fillRect(0, 0, view.w, view.h);
+    const w = 780, h = 470;
+    const x = (view.w - w) / 2, y = (view.h - h) / 2;
+    ctx.fillStyle = 'rgba(12,16,24,0.96)'; ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 3; ctx.strokeRect(x, y, w, h);
+    text('RICO\'S EMPIRE — BUSINESSES', view.w / 2, y + 24, 30, '#ffd23f', 'center', true);
+    text('Cash: ' + fmtMoney(s.player.money) + '   ·   Income: $' + empireTotalIncomePerMin(emp) + '/min   ·   Pending: $' + empirePendingTotal(emp), view.w / 2, y + 66, 16, '#f4f1e6', 'center');
+    EMPIRE.defs.forEach((def, i) => {
+      const iy = y + 108 + i * 48;
+      const own = emp.owned[def.id];
+      const attacked = empireUnderAttack(emp, def.id);
+      ctx.fillStyle = i === s.empireSel ? 'rgba(255,210,63,0.18)' : 'rgba(255,255,255,0.04)';
+      ctx.fillRect(x + 24, iy - 6, w - 48, 40);
+      const status = !own ? 'FOR SALE ' + fmtMoney(def.price) + ' — earns $' + def.income + '/min'
+        : attacked ? 'UNDER ATTACK! — income stopped until the crew is beaten'
+        : 'Lv ' + own.level + ' · $' + empireIncomePerMin(emp, def.id) + '/min · pending $' + Math.floor(own.pending);
+      text((i + 1) + '. ' + def.name + ' — ' + status, x + 40, iy + 4, 16, attacked ? '#ff6b5e' : own ? '#7ee787' : '#f4f1e6');
+      text(!own ? 'BUY' : Math.floor(own.pending) >= 1 ? 'COLLECT $' + Math.floor(own.pending) : 'UPGRADE', x + w - 40, iy + 4, 16, attacked ? '#ff6b5e' : '#ffd23f', 'right', true);
+    });
+    text(s.empireMsg || 'Press 1-3: buy a front, collect its payout, or upgrade it — B to close', view.w / 2, y + h - 58, 16, '#ffd23f', 'center');
+    text('Owned fronts earn every minute. Rival crews raid them on a timer — a raided front earns nothing until you beat its crew.', view.w / 2, y + h - 30, 13, '#c9c4b2', 'center');
   }
   function drawPanel(title, lines, prompt, color) {
     ctx.fillStyle = 'rgba(6,10,18,0.72)'; ctx.fillRect(0, 0, view.w, view.h);
@@ -510,20 +595,21 @@ export function createRenderer(canvas) {
         'An original open-world crime story. You are Rico Vega, driver-for-hire.',
         'Steal cars, outrun the police, run missions for Mama Luz — and take the city.',
         'WASD move / drive · E steal & exit cars · Mouse aim, click to shoot · Space punch',
-        'Missions: 9 story jobs + side jobs · Marina & Old Town, rain and storms, day/night cycle, bikes & garage (G)',
+        'Missions: 11 story jobs + side jobs · Empire fronts to buy and defend · Marina & Old Town, rain and storms, day/night cycle, bikes & garage (G)',
         'Best score: ' + best + '   ·   M mute · P pause',
       ], 'Press ENTER or click to start', '#ffd23f');
       return;
     }
     drawHud(s);
     if (s.garageOpen) { drawGarage(s); return; }
+    if (s.empireOpen) { drawEmpire(s); return; }
     if (screen === SCREEN_PAUSED) drawPanel('PAUSED', ['The city waits for you, Rico.', 'Your progress is saved.'], 'Press P or ENTER to resume');
     else if (screen === SCREEN_BUSTED) drawPanel('BUSTED!', ['The Porto Verde police caught you. Bail: $150.', 'Your mission progress is kept — try again.'], 'Press ENTER to get out and keep playing', '#4f8ef7');
     else if (screen === SCREEN_WASTED) drawPanel('WASTED', ['Rico went down. The hospital patched him up — $150.', 'Your mission progress is kept — try again.'], 'Press ENTER to get back on the street', '#ff6b5e');
     else if (screen === SCREEN_WIN) drawPanel('KING OF PORTO VERDE', [
       'Story complete! Rico owns the city. Final score: ' + p.score,
       'Money: ' + fmtMoney(p.money) + ' · Crimes: ' + p.crimes + ' · Best: ' + best,
-      'Free roam continues — taxi fares, package drops and vigilante jobs still pay.',
+      'Free roam continues — taxi fares, package drops, vigilante jobs and your empire fronts still pay.',
     ], 'Press ENTER to keep playing in free roam', '#7ee787');
   }
   function drawWorldPreview(s) {

@@ -5,11 +5,12 @@
 // /output/dossier.json, the summary the judge reads, with the vendored make.fun library.
 // The game itself is an original open-world crime game: the coastal city of Porto Verde
 // (Marina district in the south-east, Old Town in the north-west), Rico Vega's fixer story
-// across nine story missions, traffic, pedestrians, police with roadblocks and ramming, a wanted
-// level, garage upgrades bought with cash, combat, a HUD with minimap, save/load and
-// synthesised sound. v4 adds rolling weather (rain and storms that steal grip and darken the
-// sky), missions 8-9 against the Don, taxi and vigilante side jobs, Rain Tires, a van class,
-// sprint stamina and a headlight toggle.
+// across eleven story missions, traffic, pedestrians, police with roadblocks and ramming, a wanted
+// level, garage upgrades bought with cash, an empire of businesses that earn income and draw
+// rival raids, combat, a HUD with minimap, save/load and
+// synthesised sound. v5 adds the empire business system (three buyable fronts with income,
+// upgrades and rival raids, opened with B), missions 10-11 against the rival crew and its
+// boss, and restages the street and mission screenshots on the new fronts.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:

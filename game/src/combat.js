@@ -9,14 +9,17 @@ export function spawnEnemies(combat, x, y, count, kind) {
     // The fixer (mission 7 finale) is a real boss: triple health, faster trigger
     // finger, and he holds his ground longer than his guards.
     const isFixer = kind === 'fixer' && i === 0;
+    // The rival boss (mission 11 finale): the toughest fight in the game —
+    // more health than the Don, and he charges Rico instead of holding ground.
+    const isBoss = kind === 'boss' && i === 0;
     const ex = x + (Math.random() - 0.5) * 180, ey = y + (Math.random() - 0.5) * 180;
     const flankSide = i % 2 === 0 ? 1 : -1;
     combat.enemies.push({
       x: ex, y: ey,
-      hp: isFixer ? 150 : 50, speed: isFixer ? 70 : 95 + Math.random() * 40, angle: 0,
+      hp: isBoss ? 260 : isFixer ? 150 : 50, speed: isBoss ? 85 : isFixer ? 70 : 95 + Math.random() * 40, angle: 0,
       // A 'fixer' squad is one boss plus guards; other squads keep their kind.
-      kind: kind === 'fixer' ? (isFixer ? 'fixer' : 'thug') : (kind || 'thug'),
-      shootCd: isFixer ? 0.6 + Math.random() : 1 + Math.random() * 2, alive: true, flash: 0,
+      kind: kind === 'fixer' ? (isFixer ? 'fixer' : 'thug') : (kind === 'boss' ? (isBoss ? 'boss' : 'thug') : (kind || 'thug')),
+      shootCd: isBoss ? 0.5 + Math.random() : isFixer ? 0.6 + Math.random() : 1 + Math.random() * 2, alive: true, flash: 0,
       // Flank side for the Don's guards (see stepCombat): each guard picks
       // a side of Rico to circle toward, so the squad cross-fires him.
       flank: flankSide, flankDist: 150 + Math.random() * 60,

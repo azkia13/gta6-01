@@ -110,6 +110,9 @@ export function createAudio() {
         rainSrc = null; rainGain = null;
       }
     },
+    // Cash-register cha-ching for a business payout or a defended front:
+    // two bright coin pings over a till-drawer clunk.
+    cashRegister() { tone(1318, 0.1, 'sine', 0.2, 1568); noise(0.08, 0.25, true); setTimeout(() => tone(1760, 0.18, 'sine', 0.2, 2093), 90); },
     winJingle() { [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => tone(f, 0.22, 'sine', 0.2), i * 130)); },
     // Side-job payoff jingle: a quick rising triangle chirp, shorter and
     // brighter than the mission win fanfare so a fare feels different.
