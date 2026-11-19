@@ -1,5 +1,5 @@
 // Porto Verde — boot, loop, screens, wanted/police, missions, save/load, shot staging.
-// ?seed=N fixes the city. ?shot=chase|menu|street|mission stages that scene and sets
+// ?seed=N fixes the city. ?shot=chase|menu|street|mission|empire stages that scene and sets
 // window.__shotReady. window.__game exposes live state for playtesting.
 import { WORLD, SAVE_KEY, BEST_KEY, POLICE, HELI, VIGILANTE, EMPIRE, mulberry32, clamp, dist } from './config.js';
 import { generateCity } from './world.js';
@@ -588,6 +588,20 @@ function stageShot(name) {
     s.player.x = 1000; s.player.y = 380; s.player.money = 2400; s.player.score = 2400;
     s.empire.owned.laundromat = { level: 1, pending: 85 };
     s.missionState.active = true; s.missionState.index = 9; s.missionState.step = 1;
+    s.missionState.collectThisStep = 0;
+    updateObjective();
+  } else if (name === 'empire') {
+    // Empire panel (v5): all three fronts owned, pending payouts, mission 11
+    // "Empire Strikes Back" live; Rico outside Club Neon in the late afternoon.
+    s.screen = SCREEN_PLAY;
+    s.clock = 17 * 60 + 30;
+    setWeather(s.weather, 'clear');
+    s.player.x = 1500; s.player.y = 1500; s.player.money = 9800; s.player.score = 9800; s.player.wanted = 0;
+    s.empire.owned.laundromat = { level: 1, pending: 85 };
+    s.empire.owned.chopshop = { level: 2, pending: 240 };
+    s.empire.owned.nightclub = { level: 2, pending: 310 };
+    s.empireOpen = true; s.empireSel = 2; s.empireMsg = '';
+    s.missionState.active = true; s.missionState.index = 10; s.missionState.step = 0;
     s.missionState.collectThisStep = 0;
     updateObjective();
   }
